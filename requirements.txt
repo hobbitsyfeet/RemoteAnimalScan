@@ -5,6 +5,7 @@ plyfile
 python-mnist
 requests
 scipy
+sklearn
 svgpathtools
 open3d >= 0.11.2
-kivy
+pyqt5

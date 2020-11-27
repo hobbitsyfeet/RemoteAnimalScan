@@ -99,12 +99,24 @@ def get_labels(file_list, labels):
     
     return label_list
         
-def combine_ply_from_folder(file_list,labels):
+def combine_ply_from_folder(file_list, labels):
     """
     File_list is a list of files and their paths
+    Labels: a list of strings you want to extract based on labels
+
+    Returns: 
+            cloud_list = [o3d_cloud, o3d_cloud, ..., o3d_cloud] : List of o3d_Clouds
+            labels_list = [[0,1,2, ... , N], ..., [0,1,2, ... , N]] : List of integer lists containing IDs
+
+
+    This function iterates through all files in file list. It groups files by their folders and that folder creates a merged pointcloud.
+    In the process, it takes the file name and grabs the labels from that, and creates a label_list containing a label for each point in the pointcloud
+    
     """
     cloud_list = []
     label_list = []
+    
+    #Becasue we remove files from file_list as we fit them into groups, we want to iterate the folders until there is none left
     while file_list:
         for file in file_list:
             group = set()
@@ -115,72 +127,94 @@ def combine_ply_from_folder(file_list,labels):
             #Searches entire list for files which are also in that folder
             for index, search_file in enumerate(file_list):
                 search_folder = os.path.basename(os.path.dirname(search_file))
-                # print("SEARCH FOLDER", search_folder)
+
                 if search_folder == folder:
-                    
-                    #creates a temperary group which contains all files in the one folder
-                    # group.append(search_file)
+                    #creates a group which contains all files in the one folder
                     group.add(search_file)
-                    #removes the file from file_list since it is already processed
-                    # print(search_folder)
-                    # file_list.pop(index)
 
-            print("GROUP", group)
             #We now have every file in the group from the folder
-            # print(group)
+            print("GROUP", group)
 
-            #Grab labels from the group like (0,"Head") from Head.ply
-            # labels = get_labels(group, label_list)
-            print("LABELS", labels)
-            merged_labels =[]
-
+            #remove items in group from file_list
             for item in group:
                 file_list.remove(item)
-        #create a o3d_cloud based on all the points
-        # merged_cloud = o3d.geometry.PointCloud()
-        # for index, cloud in enumerate(group):
-        #     cloud = o3d.io.read_point_cloud(cloud)
-        #     merged_cloud += cloud
+                        
+            #labels of all pointclouds in group will be merged into merge_labels.
+            merged_labels = []
+            merged_cloud = o3d.geometry.PointCloud()
 
-        #     #as labels exist one-per-file, we extend the label to match points.
-        #     merged_labels.extend([labels]*get_num_points(cloud))
+            for index, cloud in enumerate(group):
+                #Load and join pointclouds
+                pcd_cloud = o3d.io.read_point_cloud(cloud)
+                merged_cloud = merged_cloud + pcd_cloud
 
-        # cloud_list.append(merged_cloud)
-        # label_list.append(merged_labels)
+                # Grab labels from the group like (0,"Head") from Head.ply
+                group_labels = get_labels([cloud], labels) 
+                print(group_labels)
+                # as labels exist one-per-file, we extend the label to match points.
+                merged_labels.extend([group_labels[0][0]]*get_num_points(pcd_cloud)) 
 
+            # Create lists of merged clouds lists of labels according to the cloud
+            cloud_list.append(merged_cloud)
+            label_list.append(merged_labels)
+
+    print(label_list)
     return cloud_list, label_list
     
             
 
         
-def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5):
+def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5, print_down_labels = False):
     sampled_labels = []
 
     if method == RANDOM_SAMPLE:
-        pass
+        random.seed(random.random())
+        points, colors, normals = o3d_to_numpy(cloud)
+        
+        sampled_points = random.sample(points, value)
+        sampled_colors = random.sample(colors, value)
+        sampled_normals = random.sample(normals, value)
+
+        sampled_labels = random.sample(labels, value)
+        sparse_pcd = numpy_to_o3d(sampled_points, sampled_colors, sampled_normals)
+
+        print("Before Downsample: ", cloud, end=" | ")
+        print("After Downsample: Pointcloud with ", len(sparse_pcd[0].points), "points." )
     
     elif method == VOXEL_SAMPLE:
         # Downsample points
         min_bound = cloud.get_min_bound() - value * 0.5
         max_bound = cloud.get_max_bound() + value * 0.5
+        
+        #Old version
+        # sparse_pcd, cubics_ids = cloud.voxel_down_sample_and_trace(value, min_bound, max_bound, False)
+        print("Before Downsample: ", cloud, end=" | ")
+        sparse_pcd = cloud.voxel_down_sample_and_trace(value, min_bound, max_bound, False)
+        print("After Downsample: Pointcloud with ", len(sparse_pcd[0].points), "points." )
 
-        sparse_pcd, cubics_ids = cloud.voxel_down_sample_and_trace(
-            cloud, value, min_bound, max_bound, False
-        )
+        cubics_ids = sparse_pcd[1]
+        sparse_pcd = sparse_pcd[0]
+
 
         # Downsample labels
-        # Solution from https://github.com/intel-isl/Open3D-PointNet2-Semantic3D/blob/master/downsample.py
+        # Solution from https://github.com/intel-isl/Open3D-PointNet2-Semantic3D/blob/master/downsample.py and modified.
         for cubic_id in cubics_ids:
             cubic_id = cubic_id[cubic_id != -1]
-            cubic_labels = labels[cubic_id]
+
+            cubic_labels = []
+            for label in cubic_id:
+                cubic_labels.append(labels[label])
+
             #Label is the maximum count of labels in voxel
             sampled_labels.append(np.bincount(cubic_labels).argmax())
 
-        # sampled_labels = np.array(sampled_labels)
+            if print_down_labels:
+                print("Cubic Labels", cubic_labels, end=" -> ")
+                print(sampled_labels[-1])
+            
+    print("Sampled Labels", sampled_labels)
 
-        # cloud = cloud.voxel_down_sample(voxel_size=value)
-
-    return cloud, sampled_labels
+    return sparse_pcd, sampled_labels
 
 def get_bounding_box(cloud):
     pass
@@ -212,22 +246,42 @@ def test_train_split(pointcloud_list, test_split=33, seed=42):
     """
     pass
 
-def export_hdf5(filename, test_list, train_list, test_labels, train_labels, point_num_test, point_num_train, max_points):
+def export_hdf5(filename, test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train, get_max_points):
     """
     test_list: list of pointclouds which are split into the test sample
     train_list: list of pointclouds which are split into the train sample
 
     test_labels: A list which contains per-point labels(int) for each pointcloud. Eg [cloud1[0,0,0 ... 0], cloud2[2,2 .. 2] ]. Each inner list contains per-point labels  
     """
+    data_h5 = np.zeros((len(cloud_list), max_points, 3))
+    colors_h5 = np.zeros((len(cloud_list), max_points, 3))
+    normals_h5 = np.zeros((len(cloud_list), max_points, 3))
+    labels_h5 = np.zeros((len(cloud_list), max_points))
 
-    train_filename = filename +"train.h5"
+
+    for index, cloud in enumerate(cloud_list):
+        np_cloud_points, np_cloud_colors, np_cloud_normals = o3d_to_numpy(cloud)
+        
+        data_h5[:np_cloud_points.shape[0],:np_cloud_points.shape[1],:np_cloud_points.shape[2]] = np_cloud_points
+        print(data_h5)
+        # point_list.append(np_cloud_points)
+        # color_list.append(np_cloud_colors)
+        # normal_list.append(np_cloud_normals)
+
+
+
+    test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train  = train_test_split(point_list, color_list, normal_list, cloud_labels, point_num_list, test_size=0.33, random_state=42)
+
+    train_filename = filename +"_train.h5"
+    print(train_filename)
     hdf_train = h5py.File(train_filename, "w")
     #dataset = f.create_dataset("data", data = point_data)
-    hdf_train.create_dataset("data", data = train_list)
-    hdf_train.create_dataset("data_num", data = data_num_train)
-    hdf_train.create_dataset("label", data = model_id_train) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
-    hdf_train.create_dataset("label_seg", data = label_train) #The labels for each point
-    hdf_train.create_dataset("normal", data = normal_train) #surface normals
+    hdf_train.create_dataset("data", data = train_points)
+    hdf_train.create_dataset("data_num", data = point_num_train)
+    # hdf_test.create_dataset("label", data = test_labels) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
+    hdf_train.create_dataset("label_seg", data = train_labels) #?
+    hdf_train.create_dataset("color", data = train_colors)
+    hdf_train.create_dataset("normal", data = train_normals)
 
     hdf_train.flush()
     hdf_train.close()
@@ -236,11 +290,13 @@ def export_hdf5(filename, test_list, train_list, test_labels, train_labels, poin
     filename.write(test_filename + '\n')
     hdf_test = h5py.File(test_filename, "w")
     #dataset = f.create_dataset("data", data = point_data)
-    hdf_test.create_dataset("data", data = data_test)
-    hdf_test.create_dataset("data_num", data = data_num_test)
-    hdf_test.create_dataset("label", data = model_id_test) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
-    hdf_test.create_dataset("label_seg", data = label_test)
-    hdf_test.create_dataset("normal", data = normal_test)
+    hdf_test.create_dataset("data", data = test_points)
+    hdf_test.create_dataset("data_num", data = point_num_test)
+    # hdf_test.create_dataset("label", data = test_labels) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
+    hdf_test.create_dataset("label_seg", data = label_test) #?
+    hdf_test.create_dataset("color", data = test_colors)
+    hdf_test.create_dataset("normal", data = test_normals)
+
 
     hdf_test.flush()
     hdf_test.close()
@@ -253,7 +309,7 @@ def get_max_points(pointcloud_list):
     max_number = 0
     for cloud in pointcloud_list:
         #get the number of points in the pointcloud
-        number = np.asarray(cloud.points).shape[0] 
+        number = get_num_points(cloud) 
 
         if number > max_number:
             max_number = number
@@ -264,10 +320,9 @@ def get_num_points(cloud):
 
 def estimate_normals(cloud, radius=0.1, max_nn=30):
 
-    # o3d.geometry.estimate_normals(
-    #     cloud,
-    #     search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1,
-    #                                                       max_nn=30))
+    cloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+        radius, max_nn))
+    # o3d.visualization.draw_geometries([downpcd])
     return cloud
 
 

@@ -59,20 +59,29 @@ class App(QWidget):
 
         filter_layout = QHBoxLayout()
         self.filter = QLineEdit()
+        self.filter_invert_check = QCheckBox("Invert")
+        
         self.filter.textChanged.connect(lambda: self.filter_list(self.file_list_widget, self.filter.text()))
         self.filter_button = QPushButton("Filter")
-        self.filter_button.clicked.connect(lambda: self.filter_list(self.file_list_widget, self.filter.text() ))
+        self.filter_button.clicked.connect(lambda: self.filter_list(self.file_list_widget, self.filter.text(), self.filter_invert_check.isChecked()))
+        self.filter_invert_check.clicked.connect(lambda: self.filter_list(self.file_list_widget, self.filter.text(), self.filter_invert_check.isChecked()))
         filter_layout.addWidget(self.filter_button)
         filter_layout.addWidget(self.filter)
+        filter_layout.addWidget(self.filter_invert_check)
 
         filter_accept_layout = QHBoxLayout()
         self.filter_accept = QLineEdit()
+        self.filter_accept_invert_check = QCheckBox("Invert")
+        
         self.filter_accept.textChanged.connect(lambda: self.filter_list(self.accept_file_widget, self.filter_accept.text()))
         self.filter_accept_button = QPushButton("Filter")
-        self.filter_accept_button.clicked.connect(lambda: self.filter_list(self.accept_file_widget, self.filter_accept.text() ))
+        self.filter_accept_button.clicked.connect(lambda: self.filter_list(self.accept_file_widget, self.filter_accept.text(), self.filter_accept_invert_check.isChecked()))
+        self.filter_accept_invert_check.clicked.connect(lambda: self.filter_list(self.accept_file_widget, self.filter_accept.text(), self.filter_accept_invert_check.isChecked()))
+
         filter_accept_layout.addWidget(self.filter_accept_button)
         filter_accept_layout.addWidget(self.filter_accept)
-        
+        filter_accept_layout.addWidget(self.filter_accept_invert_check)
+
         self.folder_explorer = QLineEdit()
         self.folder_button = QPushButton("Browse")
         self.folder_button.clicked.connect(lambda: self.get_folder())
@@ -136,6 +145,7 @@ class App(QWidget):
             self.folder_explorer.setText(folder)
             self.file_list_widget.clear()
             self.file_list_widget.addItems(os.listdir(folder))
+
         except:
             print("No path")
 
@@ -148,11 +158,17 @@ class App(QWidget):
             if type(item) is not str:
                 if os.path.isdir((self.folder_explorer.text() + "/" + item.text())):
                     print("TRUE")
-                    items.extend(os.listdir((self.folder_explorer.text() + "/" + item.text())))
+                    
+                    file_list = os.listdir((self.folder_explorer.text() + "/" + item.text()))
+                    for index, file in enumerate(file_list):
+                        file_list[index] = item.text() + "/" + file
+                    print(file_list)
+                    items.extend(file_list)
                     continue
 
             
             new_item = QListWidgetItem()
+            print(item)
             if type(item) is not str:
                 new_item.setData(0, item.text())
                 new_item.setData(1, (self.folder_explorer.text() + "/" + item.text()))
@@ -207,7 +223,7 @@ class App(QWidget):
         self.exporter = Exporter(file_list)
         self.exporter.show()
 
-    def filter_list(self, file_list, filter_string):
+    def filter_list(self, file_list, filter_string, invert = False):
         
         for index in range(file_list.count()):
             item = file_list.item(index)
@@ -217,10 +233,16 @@ class App(QWidget):
                 continue
             print(item.data(0))
             print(filter_string)
-            if filter_string in item.data(0):
-                item.setHidden(False)
+            if not invert:
+                if filter_string in item.data(0):
+                    item.setHidden(False)
+                else:
+                    item.setHidden(True)
             else:
-                item.setHidden(True)
+                if filter_string in item.data(0):
+                    item.setHidden(True)
+                else:
+                    item.setHidden(False)
             
 
 
@@ -269,6 +291,7 @@ class Exporter(QWidget):
         self.voxel_size = QDoubleSpinBox()
         self.voxel_size.setMaximum(999999999)
         self.voxel_size.setMinimum(0)
+        self.voxel_size.setValue(0.05)
         self.voxel_size.setMaximumHeight(25)
 
         
@@ -351,6 +374,11 @@ class Exporter(QWidget):
 
     def export(self, file_list):
         
+        if not self.get_items(self.labels_list):
+            print("You need to add labels...")
+            return
+
+
         save_file = self.save_file()
         # Check which features should be loaded
         features = []
@@ -380,44 +408,74 @@ class Exporter(QWidget):
         # cloud_list = prep.load_dataset(file_list)
         
         label_list = prep.get_labels(file_list, self.get_items(self.labels_list))
+
         # print(self.get_items(self.labels_list))
-        print(label_list)
+        print("File Labels:", label_list)
         cloud_list, cloud_labels = prep.combine_ply_from_folder(file_list, self.get_items(self.labels_list))
+        print(cloud_list)
         # print(cloud_labels)
         point_num_list = []
         #Prepare data in dataset
         for index, cloud in enumerate(cloud_list):
 
             #Normalize
+            print("Normalizing...")
             cloud = prep.normalize(cloud, norm_method)
 
             #Downsample
-            cloud, labels = prep.downsample(cloud, label_list[index], norm_method, down_value)
-
+            print("Downsampling...")
+            # print(cloud_labels[index])
+            cloud, labels = prep.downsample(cloud, cloud_labels[index], down_method, down_value)
+            print(cloud)
+            # print(labels)
             #Grab Features (Normals)
+            print("Estimating Normals...")
             cloud = prep.estimate_normals(cloud)
 
             #?Normalize Colour?
             
             #a list describing how many points exist in each pointcloud
+            print("Counting Points...")
             point_num_list.append(prep.get_num_points(cloud))
 
             #Assign cloud to cloud_list, updating changes
             cloud_list[index] = cloud
-            label_list[index] = labels[0]
+            cloud_labels[index] = labels
         
-        # print(cloud_list)
-        # print(label_list)
+        
+        print(cloud_list)
+        print(cloud_labels)
 
+        if len(cloud_list) < 2:
+            print("This dataset needs more than 2 pointclouds...")
+            return
 
         # #Get the maximum number of points in the dataset
-        # max_points = prep.get_max_points(cloud_list)
+        max_points = prep.get_max_points(cloud_list)
+        print("Max Dataset Points: ", max_points)
 
-        # #TestTrain Split
+        #TestTrain Split
+        point_list = []
+        color_list = []
+        normal_list = []
+        
+
+        for cloud in cloud_list:
+            np_cloud_points, np_cloud_colors, np_cloud_normals = prep.o3d_to_numpy(cloud)
+            point_list.append(np_cloud_points)
+            color_list.append(np_cloud_colors)
+            normal_list.append(np_cloud_normals)
+
+        print(cloud_labels)
+        test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train  = train_test_split(point_list, color_list, normal_list, cloud_labels, point_num_list, test_size=0.33, random_state=42)
+        # test_colors, train_colors = train_test_split(np_cloud_colors,test_size=0.33, random_state=42)
+        # test_normals, train_normals = train_test_split(np_cloud_normals,test_size=0.33, random_state=42)
+        # test_labels, train_labels = train_test_split(label_list,test_size=0.33, random_state=42)
         # test_clouds, train_clouds, test_labels, train_labels, point_num_test, point_num_train = train_test_split(cloud_list, label_list, point_num_list, test_size=0.33, random_state=42)
         
         # #Export
-        # prep.export_hdf5(save_file, test_clouds, train_clouds, test_labels, train_labels, point_num_list, max_points)
+
+        prep.export_hdf5(save_file[0], test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train)
 
 
 
