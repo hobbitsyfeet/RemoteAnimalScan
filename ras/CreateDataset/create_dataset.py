@@ -3,7 +3,7 @@ import sys
 
 import open3d as o3d
 from PyQt5.QtCore import QSize
-from PyQt5.QtGui import QIcon, QIntValidator
+from PyQt5.QtGui import QIcon, QIntValidator, QPixmap
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
                              QComboBox, QDockWidget, QDoubleSpinBox,
                              QFileDialog, QGroupBox, QHBoxLayout, QLabel,
@@ -182,7 +182,6 @@ class App(QWidget):
         
         for widget in widgets:
             to_list.addItem(widget)
-
     
     def remove_files(self, file_list):
         items = file_list.selectedIndexes()
@@ -286,8 +285,9 @@ class Exporter(QWidget):
         self.points = QSpinBox()
         self.points.setMaximum(999999999)
         self.points.setMinimum(1)
+        self.points.setValue(2048)
         self.points.setMaximumHeight(25)
-
+        
         self.voxel_size = QDoubleSpinBox()
         self.voxel_size.setMaximum(999999999)
         self.voxel_size.setMinimum(0)
@@ -297,13 +297,13 @@ class Exporter(QWidget):
         
         self.downsample = QComboBox()
         self.downsample.activated.connect(lambda: points_line.setCurrentIndex(self.downsample.currentIndex()))
-        self.downsample.addItems(["Random Sample (# Points)", "Voxel Grid (m^3)"])
+        self.downsample.addItems(["Voxel Grid (m^3)", "Random Sample (# Points)"])
         points_layout.addWidget(self.downsample)
         points_layout.addLayout(points_line)
 
         scale_layout = QHBoxLayout()
         self.scale = QComboBox()
-        self.scale.addItems(["Min-Max","Unit", "None"])
+        self.scale.addItems(["MinMax","Unit", "None"])
         scale_layout.addWidget(QLabel("Scale (normalize)"))
         scale_layout.addWidget(self.scale)
         points_layout.addLayout(scale_layout)
@@ -312,8 +312,9 @@ class Exporter(QWidget):
         self.standardize.addItems([])
 
         # points_line.(QLabel("Downsample: "))
-        points_line.addWidget(self.points)
         points_line.addWidget(self.voxel_size)
+        points_line.addWidget(self.points)
+        
         
         body.addLayout(body_right)
         labels_group = QGroupBox("Labels")
@@ -331,6 +332,14 @@ class Exporter(QWidget):
 
         
         self.labels_line = QLineEdit()
+
+        #Auto generate labels
+        print(self.file_list)
+        labels = prep.get_labels_auto(self.file_list)
+        for index, label in enumerate(labels):
+            labels[index] = label.lower().capitalize()
+        self.labels_list.addItems(set(labels))
+
         self.labels_line.returnPressed.connect(lambda: self.add_label(self.labels_line.text(), self.labels_list))
         self.labels_line.returnPressed.connect(lambda: self.labels_line.setText(""))
 
@@ -348,7 +357,7 @@ class Exporter(QWidget):
         body.addWidget(self.export_button)
 
     def add_label(self, label, item_list):
-        item_list.addItem(label)
+        item_list.addItem(label.lower().capitalize())
     
     def remove_label(self, item_list):
         items = item_list.selectedIndexes()
@@ -365,12 +374,12 @@ class Exporter(QWidget):
 
     def save_file(self):
         try:
-            file_name = str(QFileDialog.getSaveFileName(self, "Select Directory"))
+            file_name = QFileDialog.getSaveFileName(self, "Select Directory")
             # for file in folder:
         except:
             print("No path")
             pass
-        return file_name
+        return file_name[0]
 
     def export(self, file_list):
         
@@ -397,10 +406,10 @@ class Exporter(QWidget):
 
         down_method = self.downsample.currentIndex()
         down_value = 0
-        if down_method == 0:
+        if down_method == 1:
             down_method = prep.RANDOM_SAMPLE
             down_value = self.points.value()
-        elif down_method == 1:
+        elif down_method == 0:
             down_method = prep.VOXEL_SAMPLE
             down_value = self.voxel_size.value()
 
@@ -421,30 +430,27 @@ class Exporter(QWidget):
             #Normalize
             print("Normalizing...")
             cloud = prep.normalize(cloud, norm_method)
-
+            print('\r')
             #Downsample
             print("Downsampling...")
             # print(cloud_labels[index])
             cloud, labels = prep.downsample(cloud, cloud_labels[index], down_method, down_value)
-            print(cloud)
+            print('\r')
+            # print(cloud)
             # print(labels)
             #Grab Features (Normals)
             print("Estimating Normals...")
             cloud = prep.estimate_normals(cloud)
-
+            print('\r')
             #?Normalize Colour?
             
             #a list describing how many points exist in each pointcloud
             print("Counting Points...")
             point_num_list.append(prep.get_num_points(cloud))
-
+            print('\r')
             #Assign cloud to cloud_list, updating changes
             cloud_list[index] = cloud
             cloud_labels[index] = labels
-        
-        
-        print(cloud_list)
-        print(cloud_labels)
 
         if len(cloud_list) < 2:
             print("This dataset needs more than 2 pointclouds...")
@@ -465,8 +471,8 @@ class Exporter(QWidget):
             point_list.append(np_cloud_points)
             color_list.append(np_cloud_colors)
             normal_list.append(np_cloud_normals)
-
-        print(cloud_labels)
+            
+        # print(cloud_labels)
         test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train  = train_test_split(point_list, color_list, normal_list, cloud_labels, point_num_list, test_size=0.33, random_state=42)
         # test_colors, train_colors = train_test_split(np_cloud_colors,test_size=0.33, random_state=42)
         # test_normals, train_normals = train_test_split(np_cloud_normals,test_size=0.33, random_state=42)
@@ -474,13 +480,7 @@ class Exporter(QWidget):
         # test_clouds, train_clouds, test_labels, train_labels, point_num_test, point_num_train = train_test_split(cloud_list, label_list, point_num_list, test_size=0.33, random_state=42)
         
         # #Export
-
-        prep.export_hdf5(save_file[0], test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train)
-
-
-
-
-        
+        prep.export_hdf5(save_file, cloud_list, cloud_labels, point_num_list, max_points)
 
 
 def main():
@@ -491,3 +491,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+

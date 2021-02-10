@@ -9,3 +9,5 @@ sklearn
 svgpathtools
 open3d >= 0.11.2
 pyqt5
+opencv-python
+plyfile
