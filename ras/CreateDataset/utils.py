@@ -203,6 +203,14 @@ def numpy_to_o3d(np_cloud_points, np_cloud_colors=None, np_cloud_normals=None):
 
     return o3d_cloud
 
+def display_cloud(cloud):
+    o3d.visualization.draw_geometries([cloud])
+
+def edit_cloud(cloud):
+    o3d.visualization.draw_geometries_with_editing([cloud])
+    # o3d.visualization.draw_geometries_with_editing([])
+
+        
 if __name__ == "__main__":
     plydata = PlyData.read("C:/Users/legom/Documents/GitHub/RemoteAnimalScan/ras/CreateDataset/816612061344_no1.ply")
     image, depth, point_pairs = project_2D(REALSENSE_D415_INTRINSICS, plydata)
