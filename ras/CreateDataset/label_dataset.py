@@ -1,8 +1,16 @@
+from ast import While
+from cProfile import label
+from datetime import datetime
+from distutils import filelist
+from msilib import datasizemask
+from msilib.schema import CheckBox
+from statistics import mean
+from tabnanny import check
 import open3d
 import cv2
 import sys
 import numpy as np
-from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QAction, QCheckBox,
+from PyQt5.QtWidgets import (QMainWindow, QAbstractItemView, QApplication, QAction, QCheckBox,
                              QComboBox, QDockWidget, QDoubleSpinBox,
                              QFileDialog, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QListWidget, QListWidgetItem,
@@ -14,29 +22,43 @@ from PyQt5 import QtCore
 from PyQt5.QtCore import QEvent
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPainter, QBrush, QPen
+from PyQt5.QtCore import QThread, QObject, pyqtSignal
 
 from copy import deepcopy
 from plyfile import PlyData, PlyElement
 import os
+# from ras.CreateDataset.utils import o3d_add_object
 import utils
 
-class App(QWidget):
+import random
 
+from viewer import Action_Poll
+
+from multiprocessing import Process
+'''
+######################################################################
+CLASS APP
+
+
+######################################################################
+'''
+#class App(QWidget):
+class App(QMainWindow):
+    stop_signal = pyqtSignal()  # make a stop signal to communicate with the worker in another thread
     def __init__(self):
         super().__init__()
+        self.image = None
         # self.graphicsView.setMouseTracking(True)
         self.setMouseTracking(True)
         self.title = 'Label Image'
         self.left = 50
         self.top = 50
-        self.width = 640
-        self.height = 480
+        self.width = 1280
+        self.height = 720
         self.zoom_height = 480
 
         self.file_list = []
-
-        
-        
+        self.selected_file = ""
 
         self.edit_mode = False
         self.mouse_pos = (0,0)
@@ -47,78 +69,326 @@ class App(QWidget):
         self.current_polygon = None
 
         self.dataset = Dataset()
-    
-        self.current_folder, self.file_list = self.open_ply_folder()
+        self.label_layouts = []
+
+        self.o3d_vis = None
+        self.threads = []
 
         self.init_buttons()
         self.initUI()
+
         
 
-        self.file_list_widget = QListWidget()
-
+        
+        
         # self.file_list_widget.setSelectionMode(
         #     QAbstractItemView.ExtendedSelection
         # )
     def load_image():
         pass
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            if self.o3d_vis is not None:
+                self.stop_thread()
+
     @QtCore.pyqtSlot()
     def show_image(self, image):
         image = np.nan_to_num(image).astype(np.uint8)
         # self.setGeometry(self.left, self.top, image.shape[1], image.shape[0])
-        self.q_image = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888).rgbSwapped()
+        #self.q_image = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888).rgbSwapped()
+        self.q_image = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888)
         self.q_image = QPixmap.fromImage(self.q_image)
         # self.zoom_height = self.q_image.height()
         # self.image_frame.setPixmap(self.q_image)
         self.viewer.setPhoto(self.image, self.q_image)
         
+    def create_thread(self, visualizer):
+        self.o3d_vis = visualizer
+        thread = QThread()
+        worker = Action_Poll(parent=self)
+        worker.moveToThread(thread)
+        thread.started.connect(lambda: worker.poll_actions(self.o3d_vis))
+        # worker.updatedBalance.connect(self.updateBalance)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        return thread
     
+    def start_threads(self):
+        self.threads.clear()
+        shapes = []
+        for polygon in self.dataset.labels:
+            if polygon.view:
+                points_3d = utils.get_3d_from_pairs(polygon.points, self.dataset.point_pairs)
+                shapes.extend(utils.o3d_polygon(points_3d))
+
+        utils.display_cloud(self.dataset.cloud, shapes)
+
+        self.threads = [
+            self.create_thread(utils.display_cloud(self.dataset.cloud, shapes))
+        ]
+        for thread in self.threads:
+            thread.start()
+
+    # def init_viewerthread(self, visualizer):
+
+    #     print("Starting Thread")
+    #     # self.vis = o3d.visualization.Visualizer()
+    #     # self.vis.create_window()
+    #     self.worker = Action_Poll(visualizer, parent=self)
+    #     # Thread:
+        
+    #     self.stop_signal.connect(self.worker.stop)  # connect stop signal to worker stop method
+    #     self.worker.moveToThread(self.thread)
+    #     # self.worker.continue_run = True
+    #     # self.worker.finished.connect(self.thread.quit)  # connect the workers finished signal to stop thread
+    #     # self.worker.finished.connect(self.worker.deleteLater)  # connect the workers finished signal to clean up worker
+    #     # self.thread.finished.connect(self.thread.deleteLater)  # connect threads finished signal to clean up thread
+
+    #     self.thread.started.connect(self.worker.do_work)
+    #     # self.thread.finished.connect(self.worker.stop)
+    #     self.thread.start()
+
+    def new_visualizer(self):
+        self.o3d_viewer.clear_geometries()
+
+    def stop_thread(self):
+        self.stop_signal.emit()  # emit the finished signal on stop
+        # self.thread.stop()
 
     def initUI(self):
         self.layout = QVBoxLayout(self)
 
+        self.setWindowTitle(self.title)
+        self.setGeometry(self.left, self.top, self.width, self.height)
+
+
         self.viewer = PhotoViewer(self, self.dataset)
-        self.layout.addWidget(self.viewer)
-
-
+        self.setCentralWidget(self.viewer)
 
         # self.layout.setAlignment(Qt.AlignTop)
         self.header = QHBoxLayout()
         self.body = QVBoxLayout()
+        self.body_horizontal = QHBoxLayout()
+        self.body.addLayout(self.body_horizontal)
+        self.right_body = QVBoxLayout()
 
         self.layout.addLayout(self.header)
         self.layout.addLayout(self.body)
+        
+        
+        #self.body_horizontal.addWidget(self.viewer)
+
+        self.dock = QDockWidget("File List")
+        self.dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
+        
+
+    
+        self.body_horizontal.addLayout(self.right_body)
+        # fileListLayout = QVBoxLayout()
+        self.file_list_widget = QListWidget()
+        self.file_list_widget.itemDoubleClicked.connect(self.open_ply)
+        self.dock.setWidget(self.file_list_widget)
+
+
+        self.label_list_dock = QDockWidget("Label List")
+        self.label_list_widget = QListWidget()
+
+        # self.label_list_widget.itemDoubleClicked.connect(self.open_ply) #To set the label Info Widget
+        self.label_list_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.label_list_dock.setWidget(self.label_list_widget)
+        
+        self.addDockWidget(Qt.RightDockWidgetArea, self.label_list_dock)
+
+        #LABEL INFO
+        self.label_info = QDockWidget("Label Info")
+        self.label_info.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        # self.label_container_widget = QWidget()
+        self.label_stack_widget = QWidget()
+        self.label_stack_layout = QStackedLayout()
+        self.label_stack_widget.setLayout(self.label_stack_layout)
+
+        self.label_list_widget.clicked.connect(lambda: self.label_clicked())
+        self.addDockWidget(Qt.RightDockWidgetArea, self.label_info)
+
+        # self.label_info_layout = QVBoxLayout()
+        # self.label_container_widget.setLayout(self.label_info_layout)
+        self.label_info.setWidget(self.label_stack_widget)
+
 
         self.init_menu()
         self.init_image_UI()
 
-        self.setWindowTitle(self.title)
-        self.setGeometry(self.left, self.top, self.width, self.height)
+
 
         # self.show_image(self.image)
-        self.viewer.setPhoto(self.image)
-        # self.viewer.fitInView()
-
-        self.add_label()
+        # self.add_label()
         self.show()
+    
+    def label_clicked(self):
+        index = self.label_list_widget.currentRow()
+        self.label_stack_layout.setCurrentIndex(index)
+        self.current_polygon = self.dataset.labels[index]
+        self.dataset.current_polygon = self.current_polygon
+        self.viewer.current_polygon = self.current_polygon
+        self.redraw()
+
+    def redraw(self):
+        self.viewer.redraw_image()
+        image = self.viewer.image
+        image = self.viewer.draw_polygons(image)
+        self.viewer.update_image(image)
+        
+
+    def create_new_label(self):
+        #self.label_stack_layout
+        
+        label_info_layout = QVBoxLayout()
+        holder_widget = QWidget() # Add this widget dynamically
+        holder_widget.setLayout(label_info_layout)
+
+        self.label_stack_layout.addWidget(holder_widget)
+        count = self.label_stack_layout.count() -1
+        print(count)
+        self.label_stack_layout.setCurrentIndex(count+1)
+        # self.label_stack_layout.setCurrentIndex(count)
+
+        label_name = QLineEdit()
+        label_name.setPlaceholderText("Label Name")
+
+        label_id = QLineEdit()
+        label_id.setPlaceholderText("Label ID")
+
+        distance_label = QLabel()
+        distance_label.setText("Distance: 0")
+
+        visible = QCheckBox("Visible")
+        visible.setChecked(True)
+        # visible.setEnabled(False)
+        
+        parent_label = QComboBox()
+        delete = QPushButton("Delete")
+        # delete.clicked.connect(lambda: )
+        preview = QPushButton("Preview")
+
+        label_info_layout.addWidget(label_name)
+        label_info_layout.addWidget(label_id)
+        label_info_layout.addWidget(distance_label)
+        label_info_layout.addWidget(visible)
+        label_info_layout.addWidget(parent_label)
+        label_info_layout.addWidget(delete)
+        label_info_layout.addWidget(preview)
+
+        item = QListWidgetItem()
+        item.setText(("Label_" + str(count)))
+        item.setCheckState(2)
+        print(count)
+    
+
+        self.label_list_widget.addItem(item)
+        self.label_list_widget.setCurrentRow(count + 1)
+        self.label_list_widget.item
+        # self.label_list_widget.itemSelectionChanged()
+        # self.label_list_widget.itemChanged.connect(lambda: self.change_visible(count-1, visible_box=visible))
+        
+        print(label_name.text())
+        label_name.textChanged.connect(lambda: self.handle_label_name_change(label_name, count))
+        visible.clicked.connect(lambda: self.change_visible(count, item.checkState(), visible))
+        preview.clicked.connect(lambda: self.show_labels_3D())
+
+    def get_current_info_widgets(self, item_at):
+        # layout = self.label_stack_layout.children()[0].children()[0].children()
+        holder = self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget() # We get Holder Widget
+        layout = holder.layout()
+        return layout.itemAt(item_at).widget()
+        
+
+    def select_label(self):
+        index = self.parent_label.currentIndex()
+        
+    def handle_label_name_change(self, name_widget, label_index):
+        print("SELECTED")
+        new_text = name_widget.text()
+        self.dataset.current_polygon.set_label(new_text)
+        self.label_list_widget.item(label_index).setText(new_text)
+        self.redraw()
+
+    def change_visible(self, index, set_value=None, visible_box=None):
+        # print(set_value)
+        # checkbox = self.label_list_widget.item(index)
+        # if set_value is not None:
+        #     print(self.dataset.labels[index])
+        #     self.dataset.labels[index].view = set_value
+        #     checkbox.setCheckState(set_value)
+        #     if visible_box:
+        #         visible_box.setChecked(set_value)
+            # We need to set this value to 2 because 1 is partially checked (Square box instead of checkmark)
+            # if set_value is True:
+            #     checkbox.setCheckState(True)
+            # if set_value is False:
+            #     checkbox.setCheckState(False)
+        # else:
+        #     if not self.dataset.labels[index].view is True:
+        #         checkbox.setCheckState(2)
+        #     else:
+        #         checkbox.setCheckState(0) 
+        # if value == False:
+        #     print("Setting to true")
+        #     self.dataset.labels[index].view = False
+        #     if visible_box:
+        #         visible_box.setChecked(False)
+        #     checkbox.setCheckState(2)
+            
+        # else:
+        #     self.dataset.labels[index].view = True
+        #     checkbox.setCheckState(True)
+        #     if visible_box:
+        #         visible_box.setChecked(True)
+        
+        
+
+        # self.dataset.current_polygon.view = not self.dataset.current_polygon.view
+        self.dataset.labels[index].view = not self.dataset.labels[index].view
+        # checkbox.setSelected(self.dataset.labels[index].view)
+        # self.label_stack_layout.setCurrentIndex(index)
+        # self.label_stack_widget
+        self.redraw()
+        
+    def show_labels_3D(self, index=None):
+        '''
+        '''
+        self.start_threads()
+        # if self.o3d_vis is not None:
+        #     self.o3d_vis.clear_geometries()
+
+        # shapes = []
+        # # self.dataset.labels[index]
+        # for polygon in self.dataset.labels:
+        #     if polygon.view:
+        #         points_3d = utils.get_3d_from_pairs(polygon.points, self.dataset.point_pairs)
+        #         shapes.extend(utils.o3d_polygon(points_3d))
+        # self.o3d_vis = utils.display_cloud(self.dataset.cloud, shapes)
+        # self.init_viewerthread(self.o3d_vis)
+        # self.thread.connect(self.worker.do_work())
+        
+
 
 
     def init_image_UI(self):
+        pass
         # try:
-        print(self.file_list[0][:-3])
-        if self.file_list[0][-3:] == "ply":
-            print("Plyfile found")
-            self.dataset.load_ply(self.get_global_filename(self.current_folder, self.file_list[0]))
+        # print(self.file_list[0][:-3])
+        # if self.file_list[0][-3:] == "ply":
+            # print("Plyfile found")
+            # self.dataset.load_ply(self.get_global_filename(self.current_folder, self.file_list[0]))
             # self.read_ply(self.get_global_filename(self.current_folder, self.file_list[0]))
-            self.image = self.dataset.image
-        else:
-            self.image = cv2.imread(self.get_global_filename(self.current_folder, self.file_list[0]))
+            # self.image = self.dataset.image
+        # else:
+        #     self.image = cv2.imread(self.get_global_filename(self.current_folder, self.file_list[0]))
         
-        # print(self.image)
-        # print(self.image[0])
-        # print(self.image[0][0])
-        # print(self.image.shape)
-        self.original_img = deepcopy(self.image)
+        # self.original_img = deepcopy(self.image)
         # self.scene = QGraphicsScene(self)
         # self.graphics = QGraphicsPixmapItem(self.q_image)
         # self.scene.addItem(self.graphics)
@@ -151,149 +421,34 @@ class App(QWidget):
         self.header.addWidget(bar)
         
         file = bar.addMenu("File")
+        open_file = QAction("Open File", self)
+
+        open_folder = QAction("Open Folder", self)
+        open_folder.triggered.connect(lambda: self.get_folder())
+        
+        file.addAction(open_file)
+        file.addAction(open_folder)
+
+
         edit = bar.addMenu("Edit")
 
         edit_toggle = QAction("Toggle Edit Mode", self)
         edit_toggle.triggered.connect(lambda: self.viewer.toggle_edit())
 
+        edit_new_label = QAction("New Label", self)
+        edit_new_label.triggered.connect(lambda: self.add_label())
+
         edit.addAction(edit_toggle)
-
-    # def on_zoom_in(self, event):
-    #     self.zoom_height += 100
-    #     self.resize_image()
-
-    # def on_zoom_out(self, event):
-    #     self.zoom_height -= 100
-    #     self.resize_image()
-
-    # def resize_image(self):
-    #     image = np.nan_to_num(self.image).astype(np.uint8)
-    #     self.q_image = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888).rgbSwapped()
-    #     self.q_image = QPixmap.fromImage(self.q_image)
-    #     # self.zoom_height = self.q_image.height()
-
-    #     self.q_image = self.q_image.scaledToHeight(self.zoom_height)
-    #     self.image_frame.setPixmap(self.q_image)
-    #     # self.image_frame.setPixmap(self.q_image)
-        
-
-
-    # def mousePressEvent(self, event):
-    #     self.drag_start = True
-    #     print("drag start")
-    #     mapped_point = self.map_to_widget(self.image_frame, (event.x(), event.y()))
-    #     # self.map_to_widget(self.image_frame, point)
-
-    #     if self.current_polygon is not None:
-            
-    #         if event.button() == Qt.LeftButton and not self.edit_mode:
-    #             print("Left Button Clicked")
-    #             self.current_polygon.assign_point(mapped_point)
-    #             image = self.current_polygon.draw(self.image)
-    #             self.show_image(image)
-
-
-    #         if event.button() == Qt.RightButton:
-    #             print("Right button clicked")
-    #             self.current_polygon.end_poly()
-    #             image = self.current_polygon.draw(self.image)
-    #             mask = self.current_polygon.create_mask(self.image.shape[0], self.image.shape[1])
-
-    #             cropped , coordinates, cloud = self.current_polygon.get_segment_crop(self.original_img, self.dataset.point_pairs)
-    #             self.show_image(image)
-            
-    #         if event.buttons() == QtCore.Qt.LeftButton and self.edit_mode:
-                
-    #             point = self.current_polygon.check_near_point(mapped_point, dist=5)
-    #             self.selected_point = point
-                
-
-    #             # self.selected_point = poin
-
-    #             # self.current_polygon = None
-
-
-    # def mouseReleaseEvent(self, event):
-    #     mapped_point = self.map_to_widget(self.image_frame, (event.x(), event.y()))
-    #     self.drag_start = False
-    #     print("dropped")
-
-    #     if self.selected_point is not None and self.edit_mode:
-    #         self.redraw_image()
-    #         self.current_polygon.edit_point(self.selected_point, mapped_point)
-    #         self.current_polygon.draw(self.image)
-            
-    #     self.selected_point = None
-
-
-    # def mouseMoveEvent(self, event):
-    #     self.mouse_pos = (event.x(), event.y())
-    #     self.repaint()
-        
-    #     mapped_point = self.map_to_widget(self.image_frame, (event.x(), event.y()))
-
-    #     if event.buttons() == QtCore.Qt.NoButton:
-    #         if self.current_polygon is not None:
-    #             point = self.current_polygon.check_near_point(mapped_point, dist=5)
-
-    #             if point is not None:
-                    
-    #                 image = cv2.circle(self.image, point, 1, (0,255,0), 5)
-    #                 # image = cv2.circle(self.image, point, 5, (0,0,0), 1)
-    #                 self.hover_point = point
-    #                 self.show_image(image)
-
-    #             elif self.hover_point is not None and point is None:
-                    
-    #                 image = cv2.circle(self.image, self.hover_point, 1, (0,0,255), 4)
-    #                 image = cv2.circle(self.image, self.hover_point, 4, (0,0,0), 2)
-    #                 self.hover_point = None
-
-    #                 self.show_image(image)
-
-    #     if self.drag_start:
-    #         # print("dragging")
-    #         if self.current_polygon is not None:
-    #             point = self.current_polygon.check_near_point(mapped_point,dist=12)
-
-    #             if point is None and not self.edit_mode:
-    #                 self.current_polygon.assign_point(mapped_point)
-    #                 image = self.current_polygon.draw(self.image)
-    #                 self.show_image(image)
-
-    # def drawPoints(self,qp):
-
-    #       qp.setPen(Qt.red)
-    #       size = self.size()
-    #       x=self.x
-    #       y=self.y
-    #       qp.drawPoint(x,y)   
-
-    # def paintEvent(self, event):
-    #     qp = QPainter(self.q_image)
-    #     qp.setRenderHint(QPainter.Antialiasing)
-    #     pen = QPen(Qt.red, 7)
-    #     brush = QBrush(Qt.red)
-    #     qp.setPen(pen)
-    #     qp.setBrush(brush)
-    #     point = QtCore.QPoint(self.mouse_pos[0], self.mouse_pos[1])
-    #     qp.drawPoint(point)
-    #         # for i in range(self.points.count()):
-    #         #     qp.drawEllipse(self.points.point(i), 5, 5)
-    #         # or 
-    #         # qp.drawPoints(self.points)
-    # def redraw_image(self):
-    #     self.image = deepcopy(self.original_img)
-        
-    # def dragEnterEvent(self, event):
-    #     event.acceptProposedAction()
-    #     if event.source() is not self:
-    #         self.clicked.emit()
+        edit.addAction(edit_new_label)
+        self.setMenuBar(bar)
     
     def add_label(self):
         print("Creating label")
-        self.dataset.create_polygon(self.get_global_filename(self.current_folder, self.file_list[0]))
-        # self.current_polygon = self.dataset.current_polygon
+        if self.current_polygon is not None:
+            self.current_polygon.creating = False
+        # self.dataset.create_polygon(self.get_global_filename(self.current_folder, self.file_list[0]))
+        self.dataset.create_polygon(None)
+        self.create_new_label()
         self.viewer.set_polygon(self.dataset.current_polygon)
 
     def map_to_widget(self, widget, point):
@@ -309,85 +464,187 @@ class App(QWidget):
         self.edit_mode = not self.edit_mode
 
     def open_ply(self):
-        file = str(QFileDialog.getOpenFileName(self, "Select Directory")[0])
+        # file = self.file_list_widget.item(0).text()
+        self.selected_file = self.file_list_widget.selectedItems()[0].text()
+        print(self.selected_file)
+        if self.file_list[0][-3:] == "ply":
+            print("Plyfile found")
+            self.dataset.load_ply(self.get_global_filename(self.current_folder, self.selected_file))
+            self.image = self.dataset.image
+            # self.viewer.update_image(self.image)
+        else:
+            self.image = cv2.imread(self.get_global_filename(self.current_folder, self.selected_file))
+        
+        self.original_img = deepcopy(self.image)
+        
+        # We set viewer image to none before setting a new one because none is a case which determines a new original copy
+        self.viewer.image = None
+        self.viewer.setPhoto(self.image)
+        self.viewer.fitInView()
 
-
-    def open_ply_folder(self):
-        folder = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
-        file_list = os.listdir(folder)
-        print(folder,file_list)
-        return folder, file_list
+        # file = str(QFileDialog.getOpenFileName(self, "Select Directory")[0])
     
     def get_global_filename(self, folder, filename):
         print(str((folder + "/" + filename)))
         return str((folder + "/" + filename))
 
-    def read_ply(self, filename):
-        plydata = PlyData.read(filename)
-        image, depth, point_pairs = project_2D(REALSENSE_D415_INTRINSICS, plydata)
-        cloud = map_pairs_2D(image, point_pairs)
-     
+    # def read_ply(self, filename):
+    #     loaded, image, depth, point_pairs, cloud = utils.load_projected(filename)
+    #     if loaded:
+    #         cloud = utils.map_pairs_2D(image, point_pairs)
+    #     else:
+    #         plydata = PlyData.read(filename)
+    #         image, depth, point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata)
+    #         cloud = utils.map_pairs_2D(image, point_pairs)
+    #         utils.save_projected(image, depth, point_pairs, cloud)
+    
+    def get_folder(self):
+        self.current_folder = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
+        print(self.current_folder)
+        self.file_list = os.listdir(self.current_folder)
+        # for file in folder:
+        # self.folder_explorer.setText(folder)
+        self.file_list_widget.clear()
+        self.file_list_widget.addItems(self.file_list)
+        self.file_list_widget.repaint()
+        self.file_list_widget.show()
         
-        # self.label.setText('Mouse coords: ( %d : %d )' % (event.x(), event.y()))
+        
+        
+        print("Loaded",  self.file_list)
+
+
+'''
+######################################################################
+CLASS DATASET
+
+
+######################################################################
+'''
 class Dataset():
     def __init__(self):
         # self.labels = []
         # self.polygons = []
 
         # labels[filename] = (polygons, labels)
-        self.labels = {}
+        self.labels = []
         self.current_polygon = None
+        self.parent_polygon = None
         self.image = None
         self.depth = None
         self.point_pairs = None
         self.cloud = None
 
     def create_polygon(self, filename):
-        self.current_polygon = LabelPolygon()
-        self.current_polygon.creating = True
-        self.current_polygon.filename = filename
-        
-        # self.polygons.append(LabelPolygon)
+        label = LabelPolygon()
+        label.creating = True
 
-        if filename in self.labels:
-            #grab the already created list, and append a new polygon
-            new_label = self.labels[filename].value()
-            new_label.append(self.current_polygon)
-        else:
-            #new label encapsulated with list so it can append additional polygons later
-            new_label = [self.current_polygon]
-            self.labels[filename] = new_label
+        self.current_polygon = label
+
+        self.labels.append(label)
+        label.index = len(self.labels)
+
+        # if filename in self.labels.keys():
+        #     #grab the already created list, and append a new polygon
+        #     new_label = self.labels[filename]
+        #     new_label.append(self.current_polygon)
+        # else:
+        #     #new label encapsulated with list so it can append additional polygons later
+        #     new_label = [self.current_polygon]
+        #     self.labels[filename] = new_label
 
         # print(self.labels)
 
-    # def add_label(self):
+    def display_distance(self):
+        points = self.current_polygon.points[-2:]
+        dist = utils.get_distance(self.point_pairs, points[0], points[1])
+        print(dist)
 
     def get_polygon(self, int):
         pass
+    
+    def delete_polygon(self, index):
+        self.labels.pop(index)
+        self.current_polygon = index-1
 
     def load_ply(self, filename):
-        plydata = PlyData.read(filename)
-        self.image, self.depth, self.point_pairs = utils.project_2D(utils.REALSENSE_D415_INTRINSICS, plydata)
-        self.cloud = utils.map_pairs_2D(self.image, self.point_pairs)
+        loaded, self.image, self.depth, self.point_pairs, points, colours = utils.load_projected(filename)
+        print(colours)
+        if not loaded:
+            plydata = PlyData.read(filename)
+            self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata)
+            self.cloud, points, colours = utils.map_pairs_2D(self.image, self.point_pairs)
 
+            utils.save_projected(filename, self.image, self.depth, self.point_pairs, points, colours)
+        else:
+            self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours)
+            
+
+
+
+
+'''
+######################################################################
+CLASS LABELPOLYGON
+
+
+######################################################################
+'''
 class LabelPolygon():
     def __init__(self):
+        random.seed(datetime.now())
+        self.mean = (0,0)
         self.polygon_label = None
         self.filename = None
         self.points = []
+        self.view = True
+        self.index = None
+        self.color = (random.randint(0, 255),random.randint(0, 255),random.randint(0, 255),0.5) #RGBA
 
         # flag to see if polygon is being created
-        self.creating = False 
+        self.creating = True
 
-        #Red in BGR
-        self.poly_colour = (0,0,255)
+    def set_label(self, label):
+        self.polygon_label = str(label)
+
+    def calculate_mean(self):
+        '''
+        Calculates the mean of all the points
+        '''
+        mean_x = 0
+        mean_y = 0
+
+        for point in self.points:
+            mean_x += point[0]
+            mean_y += point[1]
+
+        self.mean = (mean_x/len(self.points), mean_y/len(self.points))
+
+    # def calculate_median(self):
+    #     '''
+    #     Calculates the mean of all the points
+    #     '''
+    #     mean_x = 0
+    #     mean_y = 0
+
+    #     for point in self.points:
+    #         mean_x += point[0]
+    #         mean_y += point[1]
+
+    #     self.mean = (mean_x/len(self.points), mean_y/len(self.points))
 
     def assign_point(self, location):
         """
         Creates a point in the polygon
         """
+
         self.points.append(location)
-        
+        self.calculate_mean()
+
+    # def get_points(self, point_idx):
+    #     '''
+    #     '''
+
     def start_poly(self):
         """
         Starts a new polygon (May not use?)
@@ -400,7 +657,7 @@ class LabelPolygon():
         """
         self.creating = False
 
-    def draw(self, image):
+    def draw(self, image, infill=(0,0,255,0.5), show_label=True, show_points = True, show_lines = True):
         """
         Draws the polygon with points and edges with an infill
         """
@@ -410,28 +667,35 @@ class LabelPolygon():
         output = image.copy()
         output = np.nan_to_num(overlay).astype(np.uint8)
 
-
-
-            
-        for point in self.points:
-            # image = cv2.circle(overlay, point, 1, (0,10,255),5)
-            # image = cv2.circle(overlay, point, 4, (0,0,0), 2)
-            image = cv2.circle(output, point, 1, (0,150,255), 1)
+        if show_points:
+            for point in self.points:
+                # image = cv2.circle(overlay, point, 1, (0,10,255),5)
+                # image = cv2.circle(overlay, point, 4, (0,0,0), 2)
+                image = cv2.circle(output, point, 1, (0,150,255), 1)
 
         # Draw Lines (Yellow)
+        
         if len(self.points) >= 2:
             pts = np.array(self.points, np.int32) 
-  
             pts = pts.reshape((-1, 1, 2)) 
 
             if not self.creating:
+                image = cv2.fillPoly(overlay, [pts], self.color)
 
-                image = cv2.fillPoly(overlay, [pts], (0,0,255,0.5))
+            if show_lines:
+                image = cv2.polylines(overlay,[pts], (not self.creating), (0,255,255),1 )
+            
+            if show_label:
+                font_color = (255, 245, 85)
+                if self.polygon_label:
+                    cv2.putText(output, text=self.polygon_label, org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
+                else:
+                    cv2.putText(output, text="No Label", org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
 
-            image = cv2.polylines(overlay,[pts], (not self.creating), (0,255,255),1 )
-
+            
         cv2.addWeighted(overlay, 0.3, output, 1 - 0.3,
 		0, output)
+
         return output
     
     # def draw_qt()
@@ -451,6 +715,28 @@ class LabelPolygon():
         Returns point if clicked
         """
         pass
+    
+    def get_adjacent(self, point):
+        """
+        Returns the two adjacent points, if a point is unavailable, that part of the tuple returns None
+
+            Returns (Previous, Next)
+            if Previous is none: Returns (None, Next)
+            if Next is none: Returns (Previous, None)
+            if No adjacent points: Returns (None, None)
+        """
+        adjacent = (None, None)
+        point_index = self.points.index(point)
+        #if not beginning or end, has 2 adjacent points
+        if len(self.points) > point_index + 1 and point_index >= 1:
+            adjacent = (self.points[point_index-1], self.points[point_index+1])
+        # Point is at the end, so grab prior point
+        elif len(self.points) == point_index + 1:
+            adjacent = (self.points[point_index-1], None)
+        elif point_index == 0:
+            adjacent = (None, self.points[point_index+1])
+
+        return adjacent
 
     def check_near_point(self, location, dist=10):
         for point in self.points:
@@ -461,17 +747,20 @@ class LabelPolygon():
     def check_in_polygon(self, location):
         pass
     
-    def create_mask(self,width, height):
+    def create_mask(self, width, height):
         pts = np.array(self.points, np.int32) 
         pts = pts.reshape((-1, 1, 2)) 
         black_image = np.zeros((width, height), np.uint8)
-        mask = cv2.fillPoly(black_image, [pts], (255,255,255))
+        mask = cv2.fillPoly(black_image, [pts], (255,255,255)) 
         # cv2.imshow("Mask", mask)
         return mask
                 # image = cv2.circle(image, point, 1, (0,255,0),7)
-    
-    def get_segment_crop(self, image,point_pairs):
+
+    def get_segment_crop(self, image, point_pairs):
         
+        print(image)
+        print(point_pairs)
+
         pts = np.array(self.points)
 
         ## (1) Crop the bounding rect
@@ -515,11 +804,11 @@ class LabelPolygon():
         # full_bg_invalid[full_bg_invalid >= 255] = -1
         # full_bg_invalid = full_bg_invalid.astype(np.int16) * -1
         # print(full_bg_invalid)
-        dst2 = bg+ dst
+        dst2 = bg + dst
         full_dst2 = full_bg + full_dst 
         full_invalid_dst2 = full_bg_invalid + full_dst
 
-        cloud = utils.map_pairs_2D(full_invalid_dst2, point_pairs)
+        cloud, points, colour = utils.map_pairs_2D(full_invalid_dst2, point_pairs)
         # utils.display_cloud(cloud)
         utils.edit_cloud(cloud)
         
@@ -531,12 +820,21 @@ class LabelPolygon():
         # cv2.waitKey(0)
         return dst2, coordinates, cloud
 
+
+'''
+######################################################################
+CLASS PHOTOVIEWER
+
+
+######################################################################
+'''
 class PhotoViewer(QGraphicsView):
     photoClicked = QtCore.pyqtSignal(QtCore.QPoint)
 
     def __init__(self, parent, dataset):
         super(PhotoViewer, self).__init__(parent)
         self.parent = parent
+        self.dataset = dataset
         self.image = None
         self.original_img = None
         self._zoom = 0
@@ -558,10 +856,19 @@ class PhotoViewer(QGraphicsView):
         self.edit_mode = False
         self.mouse_pos = None
         self.selected_point = None
+        self.current_polygon = None
         self.setDragMode(QGraphicsView.NoDrag)
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        # self.update_visualizer()
+
+    def start():
+        pass
+
+
+    @QtCore.pyqtSlot()
     def update_image(self, image):
         image = np.nan_to_num(image).astype(np.uint8)
         # self.setGeometry(self.left, self.top, image.shape[1], image.shape[0])
@@ -570,6 +877,12 @@ class PhotoViewer(QGraphicsView):
         # self.zoom_height = self.q_image.height()
         # self.image_frame.setPixmap(self.q_image)
         self.setPhoto(image, self.q_image)
+
+    def draw_polygons(self, image):
+        for polygon in self.dataset.labels:
+            if polygon.view is True:
+                image = polygon.draw(image)
+        return image
 
     def toggle_edit(self):
         self.edit_mode = not self.edit_mode
@@ -594,6 +907,7 @@ class PhotoViewer(QGraphicsView):
                 self.scale(factor, factor)
             self._zoom = 0
 
+    @QtCore.pyqtSlot()
     def redraw_image(self):
         self.image = deepcopy(self.original_img)
 
@@ -603,6 +917,8 @@ class PhotoViewer(QGraphicsView):
             self.original_img = deepcopy(self.image)
         else:
             self.image = image
+            
+            
         # print(image)
         image = np.nan_to_num(image).astype(np.uint8)
         pixmap = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888).rgbSwapped()
@@ -620,6 +936,9 @@ class PhotoViewer(QGraphicsView):
         
 
     def wheelEvent(self, event):
+        if self.image is None:
+            return
+
         if self.hasPhoto():
             if event.angleDelta().y() > 0:
                 factor = 1.25
@@ -641,6 +960,9 @@ class PhotoViewer(QGraphicsView):
             self.setDragMode(QGraphicsView.ScrollHandDrag)
 
     def mousePressEvent(self, event):
+        if self.image is None:
+            return
+
         if self._photo.isUnderMouse():
             self.photoClicked.emit(self.mapToScene(event.pos()).toPoint())
             # print(self.mapToScene(event.pos()).toPoint())
@@ -653,6 +975,14 @@ class PhotoViewer(QGraphicsView):
         mapped_point = (mapped_point.x(), mapped_point.y())
         # self.map_to_widget(self.image_frame, point)
 
+        
+
+        if self.current_polygon is None:
+            print(self.parent.selected_file)
+            self.parent.add_label()
+            # self.dataset.create_polygon(self.parent.selected_file)
+            # self.current_polygon = self.dataset.current_polygon
+
         if self.current_polygon is not None:
             
             if event.button() == Qt.LeftButton and not self.edit_mode:
@@ -660,7 +990,19 @@ class PhotoViewer(QGraphicsView):
                 self.current_polygon.assign_point(mapped_point)
                 self.redraw_image()
                 image = self.current_polygon.draw(self.image)
+                
                 self.update_image(image)
+                
+                if self.parent.o3d_vis is not None:
+                    print("Visualizer", self.parent.o3d_vis)
+                    print("Updating visualizer")
+                    points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
+                    poly = utils.o3d_polygon(points_3d)
+                    utils.o3d_add_object(self.parent.o3d_vis, poly)
+                    # self.parent.o3d_vis.update_geometry(poly)
+                    # self.parent.o3d_vis.poll_events()
+                    # self.parent.o3d_vis.update_renderer()
+                    
 
 
             if event.button() == Qt.RightButton:
@@ -675,6 +1017,7 @@ class PhotoViewer(QGraphicsView):
             
             #Edit mode select point
             if event.buttons() == QtCore.Qt.LeftButton and self.edit_mode:
+                
                 #Distance for selected point (should match mouse move event and change colour to indicate accurate selection)
                 point = self.current_polygon.check_near_point(mapped_point, dist=2)
                 self.selected_point = point
@@ -690,8 +1033,11 @@ class PhotoViewer(QGraphicsView):
     #         print("painting")
     #         self.draw_points()
 
-
+    @QtCore.pyqtSlot()
     def draw_points(self):
+        if self.image is None:
+            return
+
         if self.drag_start:
             self._painter.begin(self._scene)
             
@@ -706,6 +1052,10 @@ class PhotoViewer(QGraphicsView):
             self._painter.end()
         
     def mouseReleaseEvent(self, event):
+
+        if self.image is None:
+            return
+
         # mapped_point = self.map_to_widget(self.image_frame, (event.x(), event.y()))
         mapped_point = self.mapToScene(event.pos()).toPoint()
         mapped_point = (mapped_point.x(), mapped_point.y())
@@ -713,25 +1063,37 @@ class PhotoViewer(QGraphicsView):
         self.drag_start = False
         print("dropped")
         
+        if self.current_polygon is not None:
+            if self.selected_point is not None and self.edit_mode:
+                self.redraw_image()
+                self.current_polygon.edit_point(self.selected_point, mapped_point)
 
-        if self.selected_point is not None and self.edit_mode:
-            self.redraw_image()
-            self.current_polygon.edit_point(self.selected_point, mapped_point)
-            
-        image = self.current_polygon.draw(self.image)
-        self.update_image(image)
-            
-        self.selected_point = None
+                
+            # image = self.current_polygon.draw(self.image)
+            image = self.draw_polygons(self.image)
+            self.update_image(image)
+                
+            self.selected_point = None
 
 
+
+
+    @QtCore.pyqtSlot()
     def mouseMoveEvent(self, event):
+
+        if self.image is None:
+            return
+
         self.mouse_pos = (event.x(), event.y())
         mapped_point = self.mapToScene(event.pos()).toPoint()
         mapped_point = (mapped_point.x(), mapped_point.y())
-        # self.mouse_pos = (event.x(), event.y())
-        # self.repaint()
-        
-        # mapped_point = self.map_to_widget(self.image_frame, (event.x(), event.y()))
+        self.update_distance(mapped_point)
+
+        try:
+            if self.parent.worker.continue_run is False:
+                self.parent.o3d.destroy_window()
+        except:
+            pass
 
         try:
             image = np.nan_to_num(self.original_img).astype(np.uint8)
@@ -740,10 +1102,12 @@ class PhotoViewer(QGraphicsView):
             self.redraw_image()
             image = cv2.circle(image, mapped_point, 1, (int(255-b),int(255-g),int(255-r)))
             # image = cv2.rectangle(self.image, mapped_point, mapped_point, (255-b,255-g,255-r))
-            image = self.current_polygon.draw(image)
+            # image = self.current_polygon.draw(image)
+            image = self.draw_polygons(image)
             # image = cv2.circle(self.image, self.hover_point, 1, (0,255,255), 1)
             self.update_image(image)
-        except:
+        except Exception as e:
+            print(e)
             print("Could not grab mapped point.")
 
         if event.buttons() == QtCore.Qt.NoButton:
@@ -754,7 +1118,6 @@ class PhotoViewer(QGraphicsView):
 
                 #When hovering over point
                 if point is not None:
-                    print("GReen?")
                     image = cv2.circle(self.image, point, 1, (0,255,0), 1)
                     # image = cv2.circle(self.image, point, 5, (0,0,0), 1)
                     self.hover_point = point
@@ -773,8 +1136,9 @@ class PhotoViewer(QGraphicsView):
         if self.drag_start:
 
             # self.draw_points()
-            
+            print(mapped_point)
             print("dragging")
+            self.update_distance(mapped_point, editing=True)
             if self.current_polygon is not None:
                 #Check if hover is within distance for assigning a point (distance between new points, used for hold and drag assignment)
                 point = self.current_polygon.check_near_point(mapped_point,dist=5)
@@ -784,12 +1148,47 @@ class PhotoViewer(QGraphicsView):
                     self.current_polygon.assign_point(mapped_point)
                     image = self.current_polygon.draw(self.image)
                     self.update_image(image)
+            
+            #If edit mode and point is selected
+            if self.edit_mode is True and self.selected_point is not None:
+                adjacent_points = self.current_polygon.get_adjacent(self.selected_point)
+                #if there is an adjacent point
+                if adjacent_points[0] is not None or adjacent_points[1] is not None:
+                    self.redraw_image()
+                    image = self.current_polygon.draw(self.image)
+                    if adjacent_points[0] is not None:
+                        image = cv2.line(image, adjacent_points[0], mapped_point, (0,255,255), 1)
+                    if adjacent_points[1]is not None:
+                        image = cv2.line(image, adjacent_points[1], mapped_point, (0,255,255), 1)
+                    self.update_image(image)
+        
+            
+                
 
         # else:
-            
             # image = cv2.circle(self.image, self.hover_point, 4, (0,0,0), 2)
             # self.hover_point = None
 
+    def update_distance(self, mapped_point, editing=False):
+        print("updating distance")
+        if self.current_polygon is not None:
+            if len(self.current_polygon.points) >= 1:
+                p2 = mapped_point
+                p1 = self.current_polygon.points[-1]
+                if editing and len(self.current_polygon.points) >= 2:
+                    p2 = mapped_point
+                    p1 = self.current_polygon.points[-1]
+                elif len(self.current_polygon.points) >= 2:
+                    p1 = self.current_polygon.points[-2]
+                    p2 = self.current_polygon.points[-1]
+
+                if p1 in self.dataset.point_pairs.keys() and p2 in self.dataset.point_pairs.keys():
+                    p1, colour = self.dataset.point_pairs[p1]
+                    p2, colour = self.dataset.point_pairs[p2]
+                    distance = ((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2 + (p2[2]-p1[2])**2)**(1/2)
+                    print("Distance:", distance/10)
+                    # self.parent.get_current_info_widgets(0).setText(("Distance: " + str(distance/10) + "cm"))
+                    print(self.parent.get_current_info_widgets(2).setText(("Distance: " + str(distance/10) + "cm")))
 
 def cloud_to_image():
     pass
