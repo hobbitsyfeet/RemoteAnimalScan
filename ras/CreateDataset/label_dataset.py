@@ -2,6 +2,7 @@ from ast import While
 from cProfile import label
 from datetime import datetime
 from distutils import filelist
+from itertools import count
 from msilib import datasizemask
 from msilib.schema import CheckBox
 from statistics import mean
@@ -264,6 +265,9 @@ class App(QMainWindow):
         distance_label = QLabel()
         distance_label.setText("Distance: 0")
 
+        total_distance_label = QLabel()
+        total_distance_label.setText("Distance: 0")
+
         visible = QCheckBox("Visible")
         visible.setChecked(True)
         # visible.setEnabled(False)
@@ -276,6 +280,7 @@ class App(QMainWindow):
         label_info_layout.addWidget(label_name)
         label_info_layout.addWidget(label_id)
         label_info_layout.addWidget(distance_label)
+        label_info_layout.addWidget(total_distance_label)
         label_info_layout.addWidget(visible)
         label_info_layout.addWidget(parent_label)
         label_info_layout.addWidget(delete)
@@ -303,7 +308,11 @@ class App(QMainWindow):
         holder = self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget() # We get Holder Widget
         layout = holder.layout()
         return layout.itemAt(item_at).widget()
-        
+    
+    def get_info_widget(self, index ,item_at):
+        holder = self.label_stack_layout.itemAt(index).widget() # We get Holder Widget
+        layout = holder.layout()
+        return layout.itemAt(item_at).widget()
 
     def select_label(self):
         index = self.parent_label.currentIndex()
@@ -314,6 +323,15 @@ class App(QMainWindow):
         self.dataset.current_polygon.set_label(new_text)
         self.label_list_widget.item(label_index).setText(new_text)
         self.redraw()
+
+    def hide_all(self):
+        for index in range(self.label_list_widget.count()):
+            self.get_info_widget(index, 4).setCheckState(False)
+            
+        for label in self.dataset.labels:
+            label.view = False
+        
+
 
     def change_visible(self, index, set_value=None, visible_box=None):
         # print(set_value)
@@ -359,7 +377,8 @@ class App(QMainWindow):
     def show_labels_3D(self, index=None):
         '''
         '''
-        self.start_threads()
+        if self.o3d_vis is None:
+            self.start_threads()
         # if self.o3d_vis is not None:
         #     self.o3d_vis.clear_geometries()
 
@@ -469,8 +488,11 @@ class App(QMainWindow):
         print(self.selected_file)
         if self.file_list[0][-3:] == "ply":
             print("Plyfile found")
+            
+            self.hide_all()
             self.dataset.load_ply(self.get_global_filename(self.current_folder, self.selected_file))
             self.image = self.dataset.image
+            self.add_label()
             # self.viewer.update_image(self.image)
         else:
             self.image = cv2.imread(self.get_global_filename(self.current_folder, self.selected_file))
@@ -568,6 +590,7 @@ class Dataset():
         self.current_polygon = index-1
 
     def load_ply(self, filename):
+
         loaded, self.image, self.depth, self.point_pairs, points, colours = utils.load_projected(filename)
         print(colours)
         if not loaded:
@@ -577,7 +600,7 @@ class Dataset():
 
             utils.save_projected(filename, self.image, self.depth, self.point_pairs, points, colours)
         else:
-            self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours)
+            self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours, swap_RGB=True)
             
 
 
@@ -992,10 +1015,13 @@ class PhotoViewer(QGraphicsView):
                 image = self.current_polygon.draw(self.image)
                 
                 self.update_image(image)
+
+                self.update_distance(mapped_point)
                 
                 if self.parent.o3d_vis is not None:
                     print("Visualizer", self.parent.o3d_vis)
                     print("Updating visualizer")
+                    
                     points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
                     poly = utils.o3d_polygon(points_3d)
                     utils.o3d_add_object(self.parent.o3d_vis, poly)
@@ -1062,6 +1088,8 @@ class PhotoViewer(QGraphicsView):
 
         self.drag_start = False
         print("dropped")
+
+
         
         if self.current_polygon is not None:
             if self.selected_point is not None and self.edit_mode:
@@ -1074,6 +1102,16 @@ class PhotoViewer(QGraphicsView):
             self.update_image(image)
                 
             self.selected_point = None
+
+        # Update 3D viewer while dragging and editing (After we update the changed point)
+        if self.edit_mode is True and self.parent.o3d_vis is not None:
+            cleard = self.parent.o3d_vis.clear_geometries()
+            print("Cleared: ", cleard)
+            utils.o3d_add_object(self.parent.o3d_vis, [self.parent.dataset.cloud])
+            points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
+            poly = utils.o3d_polygon(points_3d)
+            utils.o3d_add_object(self.parent.o3d_vis, poly)
+            
 
 
 
@@ -1148,7 +1186,9 @@ class PhotoViewer(QGraphicsView):
                     self.current_polygon.assign_point(mapped_point)
                     image = self.current_polygon.draw(self.image)
                     self.update_image(image)
-            
+
+
+
             #If edit mode and point is selected
             if self.edit_mode is True and self.selected_point is not None:
                 adjacent_points = self.current_polygon.get_adjacent(self.selected_point)
@@ -1162,7 +1202,6 @@ class PhotoViewer(QGraphicsView):
                         image = cv2.line(image, adjacent_points[1], mapped_point, (0,255,255), 1)
                     self.update_image(image)
         
-            
                 
 
         # else:
@@ -1173,8 +1212,26 @@ class PhotoViewer(QGraphicsView):
         print("updating distance")
         if self.current_polygon is not None:
             if len(self.current_polygon.points) >= 1:
+                
+                #Measure the total distance
+                total_distance = 0
+                for index, point in enumerate(self.current_polygon.points):
+                    if index+1 < len(self.current_polygon.points):
+                        #pixel coordinates
+                        p1 = self.current_polygon.points[index]
+                        p2 = self.current_polygon.points[index+1]
+                        # pixels mapped to depth coordinates (if they are valid)
+                        if p1 in self.dataset.point_pairs.keys() and p2 in self.dataset.point_pairs.keys():
+                            p1, colour = self.dataset.point_pairs[p1]
+                            p2, colour = self.dataset.point_pairs[p2]
+                            #total distance is the sum of distance between points
+                            total_distance += ((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2 + (p2[2]-p1[2])**2)**(1/2)
+                            self.parent.get_current_info_widgets(3).setText(("Total Distance: " + str(total_distance/10) + "cm"))
+
+                # Measure the distance between points
                 p2 = mapped_point
                 p1 = self.current_polygon.points[-1]
+        
                 if editing and len(self.current_polygon.points) >= 2:
                     p2 = mapped_point
                     p1 = self.current_polygon.points[-1]
@@ -1188,7 +1245,9 @@ class PhotoViewer(QGraphicsView):
                     distance = ((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2 + (p2[2]-p1[2])**2)**(1/2)
                     print("Distance:", distance/10)
                     # self.parent.get_current_info_widgets(0).setText(("Distance: " + str(distance/10) + "cm"))
-                    print(self.parent.get_current_info_widgets(2).setText(("Distance: " + str(distance/10) + "cm")))
+                    self.parent.get_current_info_widgets(2).setText(("Distance: " + str(distance/10) + "cm"))
+
+
 
 def cloud_to_image():
     pass

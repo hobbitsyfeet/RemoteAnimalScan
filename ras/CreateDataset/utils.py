@@ -29,8 +29,6 @@ metric radius: 0.000000
 
 # REALSENSE_D415_INTRINSICS = {"width": 640, "height": 640, "ppx": 307.155, "ppy": 243.155, "fx": 621.011, "fy": 621.011, "model": "Brown Conrady", "coeffs": [0, 0, 0, 0, 0]}
 REALSENSE_D415_INTRINSICS = {"width": 1280, "height": 720, "ppx": 307.155, "ppy": 243.155, "fx": 621.011, "fy": 621.011, "model": "Brown Conrady", "coeffs": [0, 0, 0, 0, 0]}
-
-
 KINECT_AZURE_INTRINSICS = {"width": 1080, "height": 720, "ppx": 320.803894, "ppy": 334.772949, "fx": 504.344574, "fy": 504.414703, "model": "Brown Conrady", "coeffs": [0, 0, -0.000055, 0.000065, 0]}
 
 def map_3D_to_2D(intrinsics, point3D):
@@ -270,11 +268,19 @@ def o3d_to_numpy(o3d_cloud):
     np_cloud = np.asarray(o3d_cloud.points)
     return np_cloud
 
-def numpy_to_o3d(np_cloud_points, np_cloud_colors=None, np_cloud_normals=None):
+def numpy_to_o3d(np_cloud_points, np_cloud_colors=None, np_cloud_normals=None, swap_RGB=False):
     #create o3d pointcloud and assign it
     o3d_cloud = o3d.geometry.PointCloud()
     o3d_cloud.points = o3d.utility.Vector3dVector(np_cloud_points)
     if np_cloud_colors is not None:
+        if swap_RGB:
+            R = np_cloud_colors[:,0].copy()
+            # G = np_cloud_colors[:,1].copy()
+            B = np_cloud_colors[:,2].copy()
+            
+            np_cloud_colors[:,0] = B
+            np_cloud_colors[:,2] = R
+
         o3d_cloud.colors = o3d.utility.Vector3dVector(np_cloud_colors.astype(np.float) / 255.0)
     if np_cloud_normals is not None:
         o3d_cloud.normals = o3d.utility.Vector3dVector(np_cloud_normals)
@@ -294,6 +300,7 @@ def o3d_polygon(points, colour = [1,0,0]):
     colours = []
     spheres = []
     for index, point in enumerate(points):
+        print(point)
         lineset_points.append([point[0], point[1], point[2]])
         mesh_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0)
         mesh_sphere.compute_vertex_normals()
@@ -349,7 +356,8 @@ def edit_cloud(cloud, shapes=None):
 def get_3d_from_pairs(points_2D, point_pairs):
     points_3d = []
     for point in points_2D:
-        points_3d.append(point_pairs[point][0])
+        if point in point_pairs.keys():
+            points_3d.append(point_pairs[point][0])
 
     return points_3d
 
