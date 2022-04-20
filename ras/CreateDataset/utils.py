@@ -110,6 +110,7 @@ def load_projected(filename):
     '''
     filename = filename.split('.')[0]
     filename = filename + '.projected'
+    print("Loading Filename found:", os.path.isfile(filename))
     if os.path.isfile(filename):
         print("File Exists")
         with open((filename), 'rb') as file:
@@ -122,7 +123,6 @@ def load_projected(filename):
             points = pickle.load(file)
             colours = pickle.load(file)
     else:
-        
         return False, None, None, None, None, None
     
     return True , image, depth, point_pairs, points, colours

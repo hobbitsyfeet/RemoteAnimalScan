@@ -641,14 +641,16 @@ class Dataset():
 
         loaded, self.image, self.depth, self.point_pairs, points, colours = utils.load_projected(filename)
         print(colours)
-        print(loaded)
+        print("Loaded Projected:" ,loaded)
         if not loaded:
+            print("Did not load projected...")
             plydata = PlyData.read(filename)
             self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata)
             self.cloud, points, colours = utils.map_pairs_2D(self.image, self.point_pairs)
 
             utils.save_projected(filename, self.image, self.depth, self.point_pairs, points, colours)
         else:
+            print("Did not load projected...")
             self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours, swap_RGB=True)
             
 
