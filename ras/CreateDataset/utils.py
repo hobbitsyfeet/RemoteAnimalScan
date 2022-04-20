@@ -1,6 +1,6 @@
 import numpy as np
 from plyfile import PlyData, PlyElement
-import cv2
+# import cv2
 import open3d as o3d
 import pickle
 import os.path
