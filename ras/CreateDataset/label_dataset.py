@@ -2,7 +2,9 @@ from ast import While
 from cProfile import label
 from datetime import datetime
 from distutils import filelist
+from fileinput import filename
 from itertools import count
+from json import load
 from msilib import datasizemask
 from msilib.schema import CheckBox
 from statistics import mean
@@ -36,6 +38,7 @@ import random
 from viewer import Action_Poll
 
 from multiprocessing import Process
+# import pandas as pd
 '''
 ######################################################################
 CLASS APP
@@ -228,7 +231,27 @@ class App(QMainWindow):
         # self.add_label()
         self.show()
     
+    def hide_labels(self):
+        '''
+        Hides labels on label_list_widget by filenames that exist in dataset
+        '''
+        for index in range(self.label_list_widget.count()):
+            # label = self.dataset.labels[index]
+            active_labels = self.dataset.file_labels[self.selected_file]
+
+            print(index+1, active_labels)
+
+            if index+1 not in active_labels:
+                self.label_list_widget.item(index).setHidden(True)
+            else:
+                self.label_list_widget.item(index).setHidden(False)
+
+            # self.label_stack_layout.setCurrentIndex(index)
+            # self.current_polygon = self.dataset.labels[index]
+        
+
     def label_clicked(self):
+        self.hide_labels()
         index = self.label_list_widget.currentRow()
         self.label_stack_layout.setCurrentIndex(index)
         self.current_polygon = self.dataset.labels[index]
@@ -237,6 +260,9 @@ class App(QMainWindow):
         self.redraw()
 
     def redraw(self):
+        '''
+        Resets to an original image and draws polygons, then updates the image
+        '''
         self.viewer.redraw_image()
         image = self.viewer.image
         image = self.viewer.draw_polygons(image)
@@ -245,7 +271,8 @@ class App(QMainWindow):
 
     def create_new_label(self):
         #self.label_stack_layout
-        
+        self.hide_labels()
+
         label_info_layout = QVBoxLayout()
         holder_widget = QWidget() # Add this widget dynamically
         holder_widget.setLayout(label_info_layout)
@@ -294,7 +321,7 @@ class App(QMainWindow):
 
         self.label_list_widget.addItem(item)
         self.label_list_widget.setCurrentRow(count + 1)
-        self.label_list_widget.item
+        # self.label_list_widget.item
         # self.label_list_widget.itemSelectionChanged()
         # self.label_list_widget.itemChanged.connect(lambda: self.change_visible(count-1, visible_box=visible))
         
@@ -331,6 +358,13 @@ class App(QMainWindow):
         for label in self.dataset.labels:
             label.view = False
         
+    def show_selected_file(self):
+        label_indexes = self.dataset.file_labels[self.selected_file]
+        print("LABELS", self.selected_file)
+        for index in label_indexes:
+            label = self.dataset.get_polygon(index-1)
+            label.view = True
+        # self.file_list_widget.selectedItems()[0].text()
 
 
     def change_visible(self, index, set_value=None, visible_box=None):
@@ -466,8 +500,9 @@ class App(QMainWindow):
         if self.current_polygon is not None:
             self.current_polygon.creating = False
         # self.dataset.create_polygon(self.get_global_filename(self.current_folder, self.file_list[0]))
-        self.dataset.create_polygon(None)
+        self.dataset.create_polygon(self.selected_file)
         self.create_new_label()
+        self.hide_labels()
         self.viewer.set_polygon(self.dataset.current_polygon)
 
     def map_to_widget(self, widget, point):
@@ -483,16 +518,24 @@ class App(QMainWindow):
         self.edit_mode = not self.edit_mode
 
     def open_ply(self):
+        
         # file = self.file_list_widget.item(0).text()
         self.selected_file = self.file_list_widget.selectedItems()[0].text()
         print(self.selected_file)
-        if self.file_list[0][-3:] == "ply":
+
+        extention = self.file_list[0].split('.')[-1]
+
+        if extention == "ply" or extention == "projected":
             print("Plyfile found")
             
             self.hide_all()
             self.dataset.load_ply(self.get_global_filename(self.current_folder, self.selected_file))
             self.image = self.dataset.image
-            self.add_label()
+            # print(self.dataset.file_labels.keys())
+            if self.selected_file in self.dataset.file_labels.keys():
+                self.show_selected_file()
+            else:
+                self.add_label()
             # self.viewer.update_image(self.image)
         else:
             self.image = cv2.imread(self.get_global_filename(self.current_folder, self.selected_file))
@@ -503,6 +546,10 @@ class App(QMainWindow):
         self.viewer.image = None
         self.viewer.setPhoto(self.image)
         self.viewer.fitInView()
+        self.redraw()
+        self.label_clicked()
+        # self.image = self.viewer.draw_polygons(self.image)
+        # self.viewer.update_image(self.image)
 
         # file = str(QFileDialog.getOpenFileName(self, "Select Directory")[0])
     
@@ -549,9 +596,12 @@ class Dataset():
         # self.polygons = []
 
         # labels[filename] = (polygons, labels)
+        self.file_labels = {}
+
         self.labels = []
         self.current_polygon = None
         self.parent_polygon = None
+        self.sibling_polygons = []
         self.image = None
         self.depth = None
         self.point_pairs = None
@@ -560,30 +610,37 @@ class Dataset():
     def create_polygon(self, filename):
         label = LabelPolygon()
         label.creating = True
-
+        
         self.current_polygon = label
 
         self.labels.append(label)
         label.index = len(self.labels)
 
-        # if filename in self.labels.keys():
-        #     #grab the already created list, and append a new polygon
-        #     new_label = self.labels[filename]
-        #     new_label.append(self.current_polygon)
-        # else:
-        #     #new label encapsulated with list so it can append additional polygons later
-        #     new_label = [self.current_polygon]
-        #     self.labels[filename] = new_label
-
-        # print(self.labels)
+        #create a file dictionary to keep track of which label exists to which file
+        if filename in self.file_labels.keys():
+            print("LABELS", self.file_labels.keys())
+            # append a new label onto the filelist labels
+            temp_labels = self.file_labels[filename]
+            temp_labels.append(label.index)
+            self.file_labels[filename] = temp_labels
+        else:
+            print("NEW LABEL")
+            # new label encapsulated with list so it can append additional polygons later
+            self.file_labels[filename] = [label.index] 
+            print("NEW LABEL",label.index, self.file_labels.keys() , self.file_labels[filename])
+        
+    def export_label(self, polygon):
+        pass
+        # with open('eggs.csv', 'w', newline='') as csvfile:
+        # points = polygon.points
 
     def display_distance(self):
         points = self.current_polygon.points[-2:]
         dist = utils.get_distance(self.point_pairs, points[0], points[1])
         print(dist)
 
-    def get_polygon(self, int):
-        pass
+    def get_polygon(self, index):
+        return self.labels[index]
     
     def delete_polygon(self, index):
         self.labels.pop(index)
@@ -593,6 +650,7 @@ class Dataset():
 
         loaded, self.image, self.depth, self.point_pairs, points, colours = utils.load_projected(filename)
         print(colours)
+        print(loaded)
         if not loaded:
             plydata = PlyData.read(filename)
             self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata)
@@ -781,8 +839,8 @@ class LabelPolygon():
 
     def get_segment_crop(self, image, point_pairs):
         
-        print(image)
-        print(point_pairs)
+        # print(image)
+        # print(point_pairs)
 
         pts = np.array(self.points)
 
@@ -893,6 +951,13 @@ class PhotoViewer(QGraphicsView):
 
     @QtCore.pyqtSlot()
     def update_image(self, image):
+        '''
+        This assignes a numpy image to Qimage and Pixmap.
+
+        Use when done adding elements to the image. (Does not provide clean image, only assignes image passed in to viewer)
+
+        NOTE: Use redraw_image when wanting to work with a clean slate.
+        '''
         image = np.nan_to_num(image).astype(np.uint8)
         # self.setGeometry(self.left, self.top, image.shape[1], image.shape[0])
         self.q_image = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888).rgbSwapped()
@@ -932,6 +997,11 @@ class PhotoViewer(QGraphicsView):
 
     @QtCore.pyqtSlot()
     def redraw_image(self):
+        '''
+        Resets to a copy of the original image (clean slate)
+
+        Used when drawing so objects are not redrawn infinitely. I.E mouse location
+        '''
         self.image = deepcopy(self.original_img)
 
     def setPhoto(self, image, pixmap=None):
@@ -1015,7 +1085,6 @@ class PhotoViewer(QGraphicsView):
                 image = self.current_polygon.draw(self.image)
                 
                 self.update_image(image)
-
                 self.update_distance(mapped_point)
                 
                 if self.parent.o3d_vis is not None:
@@ -1139,6 +1208,11 @@ class PhotoViewer(QGraphicsView):
 
             self.redraw_image()
             image = cv2.circle(image, mapped_point, 1, (int(255-b),int(255-g),int(255-r)))
+
+            if mapped_point in self.dataset.point_pairs.keys():
+                point, colour = self.dataset.point_pairs[mapped_point]
+                print(point[2])
+                image = cv2.putText(image, text=(str((point[2]/1000)) + "m"), org=mapped_point, fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=(int(255-b),int(255-g),int(255-r)),thickness=1, lineType=cv2.LINE_AA)
             # image = cv2.rectangle(self.image, mapped_point, mapped_point, (255-b,255-g,255-r))
             # image = self.current_polygon.draw(image)
             image = self.draw_polygons(image)
