@@ -638,7 +638,7 @@ class Dataset():
         self.current_polygon = index-1
 
     def load_ply(self, filename):
-
+        print("LOADING PLY")
         loaded, self.image, self.depth, self.point_pairs, points, colours = utils.load_projected(filename)
         print(colours)
         print("Loaded Projected:" ,loaded)

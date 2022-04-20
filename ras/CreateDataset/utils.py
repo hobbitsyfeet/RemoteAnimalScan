@@ -108,8 +108,11 @@ def load_projected(filename):
     '''
     Loads data from the output of project_2D
     '''
+    print(filename)
     filename = filename.split('.')[0]
     filename = filename + '.projected'
+    print(filename)
+    
     print("Loading Filename found:", os.path.isfile(filename))
     if os.path.isfile(filename):
         print("File Exists")
