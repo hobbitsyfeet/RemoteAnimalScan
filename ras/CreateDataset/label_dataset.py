@@ -516,6 +516,7 @@ class App(QMainWindow):
 
         extention = self.file_list[0].split('.')[-1]
 
+        print(extention)
         if extention == "ply" or extention == "projected":
             print("Plyfile found")
             
