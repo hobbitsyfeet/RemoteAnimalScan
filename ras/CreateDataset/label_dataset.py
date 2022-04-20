@@ -512,11 +512,11 @@ class App(QMainWindow):
         
         # file = self.file_list_widget.item(0).text()
         self.selected_file = self.file_list_widget.selectedItems()[0].text()
-        print(self.selected_file)
+        print("SELECTED FILE:", self.selected_file)
+        print(self.selected_file[0])
+        extention = self.selected_file.split('.')[-1]
 
-        extention = self.file_list[0].split('.')[-1]
-
-        print(extention)
+        print("EXTENTION:", extention)
         if extention == "ply" or extention == "projected":
             print("Plyfile found")
             
