@@ -108,14 +108,10 @@ def load_projected(filename):
     '''
     Loads data from the output of project_2D
     '''
-    print(filename)
     filename = filename.split('.')[0]
     filename = filename + '.projected'
-    print(filename)
 
-    print("Loading Filename found:", os.path.isfile(filename))
     if os.path.isfile(filename):
-        print("File Exists")
         with open((filename), 'rb') as file:
             image = pickle.load(file)
             print("33%")
@@ -126,7 +122,6 @@ def load_projected(filename):
             points = pickle.load(file)
             colours = pickle.load(file)
     else:
-        print(filename)
         return False, None, None, None, None, None
     
     return True , image, depth, point_pairs, points, colours
@@ -171,14 +166,14 @@ def project_3D(intrinsics, image, depth):
     image = np.nan_to_num(image, nan=-1)
     indices = np.where(image != [-1])
     coordinates = zip(indices[1], indices[0])
-    print(coordinates)
+
     image = image.flatten()
     image = np.delete(image, np.where(image == -1))
     colours = np.reshape(image,(depth.shape[0],3))
 
     points = []
-    print(len(depth))
-    print(len(list(coordinates)))
+    # print(len(depth))
+    # print(len(list(coordinates)))
     for index, point in enumerate(coordinates):
         # print(point)
     # REALSENSE_D415_INTRINSICS["width"]
@@ -317,7 +312,7 @@ def o3d_polygon(points, colour = [1,0,0]):
     colours = []
     spheres = []
     for index, point in enumerate(points):
-        print(point)
+        # print(point)
         lineset_points.append([point[0], point[1], point[2]])
         mesh_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0)
         mesh_sphere.compute_vertex_normals()
@@ -336,7 +331,7 @@ def o3d_polygon(points, colour = [1,0,0]):
             lines.append([index, index+1])
             colours.append(colour)
     # point = np.asarray(points)
-    print(points)
+    # print(points)
     line_set = o3d.geometry.LineSet()
     line_set.points = o3d.utility.Vector3dVector(points)
     line_set.lines = o3d.utility.Vector2iVector(lines)
@@ -362,7 +357,7 @@ def display_cloud(cloud, shapes=None):
     for object in shapes:  
         vis.add_geometry(object)
         # vis = o3d.visualization.draw_geometries(shapes)
-    print("Returning visualizer", vis)
+    # print("Returning visualizer", vis)
     return vis
 
 def edit_cloud(cloud, shapes=None):
