@@ -1249,12 +1249,13 @@ class PhotoViewer(QGraphicsView):
         cleard = self.parent.o3d_vis.clear_geometries()
         # print("Cleared: ", cleard)
         utils.o3d_add_object(self.parent.o3d_vis, [self.parent.dataset.cloud])
-        points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
-        poly = utils.o3d_polygon(points_3d)
-        utils.o3d_add_object(self.parent.o3d_vis, poly)
+        
+        if self.current_polygon:
+            points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
+            poly = utils.o3d_polygon(points_3d)
+            utils.o3d_add_object(self.parent.o3d_vis, poly)
 
         # Cursor location
-        
         pointer_3d = utils.get_3d_from_pairs([self.mouse_pos], self.dataset.point_pairs)
         if len(pointer_3d) >= 1:
             pointer_box = utils.o3d_box(pointer_3d[0])
