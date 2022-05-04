@@ -466,6 +466,10 @@ def display_cloud(cloud, shapes=None):
     # print("Returning visualizer", vis)
     return vis
 
+def get_global_filename(folder, filename):
+        print(str((folder + "/" + filename)))
+        return str((folder + "/" + filename))
+
 def edit_cloud(cloud, shapes=None):
     vis = o3d.visualization.draw_geometries_with_editing([cloud])
     return vis
@@ -486,9 +490,13 @@ def get_distance(p1, p2):
     return distance
 
 def get_distance_2D(point_pairs, pixel_1, pixel_2):
-    p1, colour = point_pairs[pixel_1]
-    p2, colour = point_pairs[pixel_2]
-    distance = ((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2 + (p2[2]-p1[2])**2)**(1/2)
+    distance = 0
+    if pixel_1 in point_pairs.keys() and pixel_2 in point_pairs.keys():
+        p1, colour = point_pairs[pixel_1]
+        p2, colour = point_pairs[pixel_2]
+        distance = ((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2 + (p2[2]-p1[2])**2)**(1/2)
+    else:
+        print("Point does not exist to measure")
     return distance
 
 def get_total_distance(point_pairs, points):

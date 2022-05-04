@@ -29,7 +29,6 @@ import random
 
 from viewer import Action_Poll
 
-from multiprocessing import Process
 import pandas as pd
 # import pandas as pd
 '''
@@ -443,7 +442,7 @@ class App(QMainWindow):
         open_folder.triggered.connect(lambda: self.get_folder())
         
         export_all = QAction("Export All", self)
-        export_all.triggered.connect(lambda: self.dataset.export_all_labels(self.user))
+        export_all.triggered.connect(lambda: self.dataset.export_all_labels(self.user, self.current_folder))
         
         file.addAction(open_file)
         file.addAction(open_folder)
@@ -471,7 +470,7 @@ class App(QMainWindow):
         print("Creating label")
         if self.current_polygon is not None:
             self.current_polygon.creating = False
-        # self.dataset.create_polygon(self.get_global_filename(self.current_folder, self.file_list[0]))
+        # self.dataset.create_polygon(utils.get_global_filename(self.current_folder, self.file_list[0]))
         self.dataset.create_polygon(self.selected_file)
         self.create_new_label()
         self.hide_labels()
@@ -499,7 +498,7 @@ class App(QMainWindow):
         if extention == "ply" or extention == "projected":
             
             self.hide_all()
-            self.dataset.load_ply(self.get_global_filename(self.current_folder, self.selected_file))
+            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file))
             self.image = self.dataset.image
             
             # print(self.dataset.file_labels.keys())
@@ -522,7 +521,7 @@ class App(QMainWindow):
 
             # self.viewer.update_image(self.image)
         else:
-            self.image = cv2.imread(self.get_global_filename(self.current_folder, self.selected_file))
+            self.image = cv2.imread(utils.get_global_filename(self.current_folder, self.selected_file))
         
         self.original_img = deepcopy(self.image)
         
@@ -617,7 +616,7 @@ class Dataset():
             self.file_labels[filename] = [label.index] 
             print("NEW LABEL",label.index, self.file_labels.keys() , self.file_labels[filename])
         
-    def export_label(self, polygon, participant):
+    def export_label(self, polygon, point_pairs, participant):
         '''
         'Participant': Name of participant/user
         'Filename': Filename which polygon resides
@@ -626,8 +625,13 @@ class Dataset():
         'TotalDistance': Distance between all points accumulated. - Important for measuring the distanece along the surface.                 
         '''
         points = polygon.points
-        distance = utils.get_distance_2D(self.point_pairs, points[0], points[-1])
-        total_distance = utils.get_total_distance(self.point_pairs, points)
+        try:
+            distance = utils.get_distance_2D(point_pairs, points[0], points[-1])
+        except Exception as e:
+            print(e)
+            distance = 0
+
+        total_distance = utils.get_total_distance(point_pairs, points)/10
         filename = self.get_filename(polygon)
         
         # csv_path = filename.split('.')[0] + '.csv'
@@ -644,9 +648,14 @@ class Dataset():
             print(e)
             print("Make sure you do not have", csv_path,  "open.")
 
-    def export_all_labels(self, participant):
+    def export_all_labels(self, participant, current_folder):
         for polygon in self.labels:
-            self.export_label(polygon, participant)
+            filename = self.get_filename(polygon)
+            load_file = utils.get_global_filename(current_folder, filename)
+
+            loaded, image, depth, point_pairs,  points, colours = utils.load_projected(load_file)
+            print(loaded, point_pairs)
+            self.export_label(polygon, point_pairs, participant)
 
     
     def get_filename(self, polygon):
@@ -1249,7 +1258,7 @@ class PhotoViewer(QGraphicsView):
         cleard = self.parent.o3d_vis.clear_geometries()
         # print("Cleared: ", cleard)
         utils.o3d_add_object(self.parent.o3d_vis, [self.parent.dataset.cloud])
-        
+
         if self.current_polygon:
             points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
             poly = utils.o3d_polygon(points_3d)
