@@ -181,25 +181,46 @@ def save_projected(filename, image, depth, point_pairs, points, colours):
         print("Save Complete: " + filename)
 
 
-def load_projected(filename):
+def load_projected(filename, progressbar=None):
     '''
     Loads data from the output of project_2D
     '''
     filename = filename.split('.')[0]
     filename = filename + '.projected'
+    
+    # if progressbar:
+        # progressbar.setFormat('Loading Projected Data...')
 
     if os.path.isfile(filename):
         with open((filename), 'rb') as file:
+
+            if progressbar is not None:
+                progressbar.setValue(0)
             print("0%")
             image = pickle.load(file)
+
+            if progressbar is not None:
+                progressbar.setValue(10)
             print("20%")
+
             depth = pickle.load(file)
+            if progressbar is not None:
+                progressbar.setValue(20)
             print("40%")
+
             point_pairs = pickle.load(file)
+            if progressbar is not None:
+                progressbar.setValue(30)
             print("60%")
+
             points = pickle.load(file)
+            if progressbar is not None:
+                progressbar.setValue(40)
             print("80%")
+
             colours = pickle.load(file)
+            if progressbar is not None:
+                progressbar.setValue(50)
             print("100%")
 
     else:
@@ -207,7 +228,7 @@ def load_projected(filename):
     
     return True , image, depth, point_pairs, points, colours
 
-def project_2D(intrinsics, plydata):
+def project_2D(intrinsics, plydata, progress=None):
     '''
     This function takes 3D data and maps it to 2D. 
     '''
@@ -239,6 +260,10 @@ def project_2D(intrinsics, plydata):
         image[projected_point[1],projected_point[0]] = colour
         point_pairs[(projected_point[0], projected_point[1])] = (point, colour)
         inverse_pairs[point] = [(projected_point[0], projected_point[1])]
+        if progress is not None:
+            # print(int((index/num_verts)*100))
+            progress.window().processEvents()
+            progress.setValue(int((index/num_verts)*100))
         # print(image[projected_point[0],projected_point[1]])
     # print(image)
     print("Project to 2D Complete")

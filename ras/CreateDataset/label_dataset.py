@@ -1,5 +1,7 @@
+from ctypes import alignment
 from datetime import datetime
 from fileinput import filename
+from tkinter.ttk import Progressbar
 
 # import open3d
 import cv2
@@ -10,7 +12,7 @@ from PyQt5.QtWidgets import (QMainWindow, QAbstractItemView, QApplication, QActi
                              QFileDialog, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QListWidget, QListWidgetItem,
                              QPushButton, QSpinBox, QStackedLayout, QStyle,
-                             QTextEdit, QVBoxLayout, QWidget, QMenuBar, QGraphicsView, QToolButton, QGraphicsScene, QGraphicsPixmapItem, QFrame, QInputDialog)
+                             QTextEdit, QVBoxLayout, QWidget, QMenuBar, QGraphicsView, QToolButton, QGraphicsScene, QGraphicsPixmapItem, QFrame, QInputDialog, QProgressBar)
 from PyQt5.QtGui import QIcon, QPixmap, QImage
 from PyQt5 import QtGui
 from PyQt5 import QtCore
@@ -43,6 +45,8 @@ class App(QMainWindow):
     stop_signal = pyqtSignal()  # make a stop signal to communicate with the worker in another thread
     def __init__(self):
         super().__init__()
+
+        # self.
         self.image = None
         # self.graphicsView.setMouseTracking(True)
         self.setMouseTracking(True)
@@ -76,7 +80,7 @@ class App(QMainWindow):
         
         self.user , pressed = QInputDialog.getText(self, "User Name", "Name: ",
                                            QLineEdit.Normal, "")
-        while self.user is "":
+        while self.user == "":
             self.user , pressed = QInputDialog.getText(self, "User Name", "Name: ",
                                            QLineEdit.Normal, "")
         
@@ -200,6 +204,13 @@ class App(QMainWindow):
         # self.label_container_widget.setLayout(self.label_info_layout)
         self.label_info.setWidget(self.label_stack_widget)
 
+        self.load_bar = QProgressBar(self.dock, alignment=Qt.AlignCenter)
+        self.load_bar.setMaximum(100)
+        self.load_bar.setGeometry(60,3,100,15)
+        self.load_bar.setAlignment(Qt.AlignCenter)
+        # self.right_body.addWidget(self.load_bar)
+
+        # self.layout.addWidget(self.load_bar)
 
         self.init_menu()
         self.init_image_UI()
@@ -207,7 +218,7 @@ class App(QMainWindow):
 
 
         # self.show_image(self.image)
-        # self.add_label()
+        # self.add_label() 
         self.show()
     
     def hide_labels(self):
@@ -460,12 +471,25 @@ class App(QMainWindow):
         edit_new_label = QAction("New Label", self)
         edit_new_label.triggered.connect(lambda: self.add_label())
 
-        
-
         edit.addAction(edit_toggle)
         edit.addAction(edit_new_label)
         self.setMenuBar(bar)
-    
+
+
+        view = bar.addMenu("view")
+
+        increase_cursor = QAction("Toggle Edit Mode", self)
+        increase_cursor.triggered.connect(lambda: self.viewer.increase_cursor())
+        increase_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Plus)])
+
+        decrease_cursor = QAction("Toggle Edit Mode", self)
+        decrease_cursor.triggered.connect(lambda: self.viewer.decrease_cursor())
+        decrease_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Minus)])
+        
+
+        view.addAction(increase_cursor)
+        view.addAction(decrease_cursor)
+        
     def add_label(self):
         print("Creating label")
         if self.current_polygon is not None:
@@ -498,7 +522,7 @@ class App(QMainWindow):
         if extention == "ply" or extention == "projected":
             
             self.hide_all()
-            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file))
+            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file), progressbar=self.load_bar)
             self.image = self.dataset.image
             
             # print(self.dataset.file_labels.keys())
@@ -723,19 +747,24 @@ class Dataset():
         
         # self.current_polygon = index-1
 
-    def load_ply(self, filename):
-        loaded, self.image, self.depth, self.point_pairs,  points, colours = utils.load_projected(filename)
+    def load_ply(self, filename, progressbar=None):
+        loaded, self.image, self.depth, self.point_pairs,  points, colours = utils.load_projected(filename, progressbar)
         if not loaded:
             print("Did not load projected...")
             plydata = PlyData.read(filename)
             print("Calculating Projection...")
-            self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata)
+            self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata, progress=progressbar)
             self.cloud, points, colours = utils.map_pairs_2D(self.image, self.point_pairs)
 
             utils.save_projected(filename, self.image, self.depth, self.point_pairs, points, colours)
+
         else:
             print("Projection loaded...")
+            # progressbar.setFormat("Converting Pointcloud...")
+            progressbar.setValue(60)
             self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours, swap_RGB=True)
+            progressbar.setValue(100)
+            # progressbar.setFormat("Done...")
             
 
 
@@ -791,6 +820,7 @@ class LabelPolygon():
 
     #     self.mean = (mean_x/len(self.points), mean_y/len(self.points))
 
+    
     def assign_point(self, location):
         """
         Creates a point in the polygon
@@ -867,6 +897,19 @@ class LabelPolygon():
                 self.points[i] = point_stop
                 print("Replaced", point, " to ", point_stop)
         # pass
+
+    def remove_point(self, point):
+        """
+        Removes a point from the polygon
+        """
+        for i, test_point in enumerate(self.points):
+            if point == test_point:
+                self.points.pop(i)
+                
+
+        
+
+        
 
     def get_point(self, clicked_location):
         """
@@ -1015,6 +1058,8 @@ class PhotoViewer(QGraphicsView):
         self.mouse_pos = None
         self.selected_point = None
         self.current_polygon = None
+        self.cursor_size = 1
+
         self.setDragMode(QGraphicsView.NoDrag)
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -1025,6 +1070,11 @@ class PhotoViewer(QGraphicsView):
     def start():
         pass
 
+    def increase_cursor(self):
+        self.cursor_size += 1
+    
+    def decrease_cursor(self):
+        self.cursor_size -= 1
 
     @QtCore.pyqtSlot()
     def update_image(self, image):
@@ -1182,13 +1232,24 @@ class PhotoViewer(QGraphicsView):
 
             if event.button() == Qt.RightButton:
                 print("Right button clicked")
+                self.redraw_image()
+                point = self.current_polygon.check_near_point(mapped_point, dist=2)
+                self.current_polygon.remove_point(point)
+                self.selected_point = None
+                
+                image = self.current_polygon.draw(self.image)
+                self.update_image(image)
+
+                '''
+                #NOTE this comment block cuts segment and displays it in 3D
                 self.current_polygon.end_poly()
                 self.redraw_image()
                 image = self.current_polygon.draw(self.image)
                 mask = self.current_polygon.create_mask(self.image.shape[0], self.image.shape[1])
 
                 cropped , coordinates, cloud = self.current_polygon.get_segment_crop(self.original_img, self.parent.dataset.point_pairs)
-                self.update_image(image)
+                '''
+                # self.update_image(image)
             
             #Edit mode select point
             if event.buttons() == QtCore.Qt.LeftButton and self.edit_mode:
@@ -1302,7 +1363,7 @@ class PhotoViewer(QGraphicsView):
             b,g,r = image[mapped_point[1]][mapped_point[0]]
 
             self.redraw_image()
-            image = cv2.circle(image, mapped_point, 1, (int(255-b),int(255-g),int(255-r)))
+            image = cv2.circle(image, mapped_point, radius=self.cursor_size, color=(int(255-b),int(255-g),int(255-r)), thickness=1)
 
             if mapped_point in self.dataset.point_pairs.keys():
                 point, colour = self.dataset.point_pairs[mapped_point]
@@ -1325,7 +1386,7 @@ class PhotoViewer(QGraphicsView):
 
                 #When hovering over point
                 if point is not None:
-                    image = cv2.circle(self.image, point, 1, (0,255,0), 1)
+                    image = cv2.circle(self.image, point, self.cursor_size, (0,255,0), 1)
                     # image = cv2.circle(self.image, point, 5, (0,0,0), 1)
                     self.hover_point = point
                     self.update_image(image)
@@ -1334,16 +1395,17 @@ class PhotoViewer(QGraphicsView):
                 elif self.hover_point is not None and point is None:
                     # self.redraw_image()
                     
-                    image = cv2.circle(self.image, self.hover_point, 1, (0,255,255), 1)
+                    image = cv2.circle(self.image, self.hover_point, self.cursor_size, (0,255,255), 1)
                     # image = cv2.circle(self.image, self.hover_point, 4, (0,0,0), 2)
                     self.hover_point = None
 
                     self.update_image(image)
 
-        if self.drag_start:
+
+        if self.drag_start and event.buttons() != Qt.RightButton:
 
             print("dragging")
-            
+            # if event.button() == Qt.LeftButton:
             if self.current_polygon is not None:
                 #Check if hover is within distance for assigning a point (distance between new points, used for hold and drag assignment)
                 point = self.current_polygon.check_near_point(mapped_point,dist=5)
