@@ -84,8 +84,11 @@ class App(QMainWindow):
             self.user , pressed = QInputDialog.getText(self, "User Name", "Name: ",
                                            QLineEdit.Normal, "")
         
-        path = os. path. abspath("./data/")
-        self.get_folder(path)
+        try:
+            path = os.path.abspath("./data/")
+            self.get_folder(path)
+        except:
+            print("Could not load data folder, find it by yourself.")
         
         
         # self.file_list_widget.setSelectionMode(
