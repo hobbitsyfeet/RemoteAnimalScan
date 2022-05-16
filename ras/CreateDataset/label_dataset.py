@@ -1,7 +1,18 @@
+# NOTE: Things to fix: 
+
+# Get ./data folder loading automatically, or at least ask for folder to work. (DONE)
+# Get rid of blue bar #DONE
+# Locate where the data saves #DONE
+# Zoom (Bind it to plus/minus as alternative) # DONE
+# Command z for deleting last interacted point
+# Redo button
+
+
+
+
 from ctypes import alignment
 from datetime import datetime
 from fileinput import filename
-from tkinter.ttk import Progressbar
 
 # import open3d
 import cv2
@@ -85,7 +96,10 @@ class App(QMainWindow):
                                            QLineEdit.Normal, "")
         
         try:
-            path = os.path.abspath("./data/")
+            # path = os.path.abspath("./data/")
+            # print(os.getcwd())
+            path = os.path.expanduser(os.getcwd()) + "/data/"
+            print(path)
             self.get_folder(path)
         except:
             print("Could not load data folder, find it by yourself.")
@@ -207,10 +221,13 @@ class App(QMainWindow):
         # self.label_container_widget.setLayout(self.label_info_layout)
         self.label_info.setWidget(self.label_stack_widget)
 
-        self.load_bar = QProgressBar(self.dock, alignment=Qt.AlignCenter)
-        self.load_bar.setMaximum(100)
-        self.load_bar.setGeometry(60,3,100,15)
-        self.load_bar.setAlignment(Qt.AlignCenter)
+
+        #NOTE PROGRESS BAR WORKS BUT LOOKS WEIRD ON MAC
+        # self.load_bar = QProgressBar(self.dock, alignment=Qt.AlignCenter)
+        # self.load_bar.setMaximum(100)
+        # self.load_bar.setGeometry(60,3,100,15)
+        # self.load_bar.setAlignment(Qt.AlignCenter)
+
         # self.right_body.addWidget(self.load_bar)
 
         # self.layout.addWidget(self.load_bar)
@@ -481,17 +498,32 @@ class App(QMainWindow):
 
         view = bar.addMenu("view")
 
-        increase_cursor = QAction("Toggle Edit Mode", self)
+        increase_cursor = QAction("Incerase Cursor", self)
         increase_cursor.triggered.connect(lambda: self.viewer.increase_cursor())
-        increase_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Plus)])
+        # increase_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Plus)])
 
-        decrease_cursor = QAction("Toggle Edit Mode", self)
+        decrease_cursor = QAction("Decrease", self)
         decrease_cursor.triggered.connect(lambda: self.viewer.decrease_cursor())
-        decrease_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Minus)])
+        # decrease_cursor.setShortcuts([QtGui.QKeySequence(Qt.Key_Minus)])
+        
+
+        zoom_in = QAction("Zoom In", self)
+        zoom_in.triggered.connect(lambda: self.viewer.zoom_in())
+        zoom_in.setShortcuts([QtGui.QKeySequence(Qt.Key_Plus)])
+        
+
+
+        zoom_out = QAction("Zoom Out", self)
+        zoom_out.triggered.connect(lambda: self.viewer.zoom_out())
+        zoom_out.setShortcuts([QtGui.QKeySequence(Qt.Key_Minus)])
+
+        view.addAction(zoom_in)
+        view.addAction(zoom_out)
         
 
         view.addAction(increase_cursor)
         view.addAction(decrease_cursor)
+
         
     def add_label(self):
         print("Creating label")
@@ -525,7 +557,7 @@ class App(QMainWindow):
         if extention == "ply" or extention == "projected":
             
             self.hide_all()
-            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file), progressbar=self.load_bar)
+            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file))
             self.image = self.dataset.image
             
             # print(self.dataset.file_labels.keys())
@@ -573,9 +605,9 @@ class App(QMainWindow):
     def get_folder(self, foldername = None):
         if foldername is None:
             self.current_folder = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
-            print(self.current_folder)
         else:
             self.current_folder = foldername
+        print(self.current_folder)
         self.file_list = os.listdir(self.current_folder)
         # for file in folder:
         # self.folder_explorer.setText(folder)
@@ -764,9 +796,9 @@ class Dataset():
         else:
             print("Projection loaded...")
             # progressbar.setFormat("Converting Pointcloud...")
-            progressbar.setValue(60)
+            # progressbar.setValue(60)
             self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours, swap_RGB=True)
-            progressbar.setValue(100)
+            # progressbar.setValue(100)
             # progressbar.setFormat("Done...")
             
 
@@ -1289,7 +1321,26 @@ class PhotoViewer(QGraphicsView):
     #         self._painter.drawPoint(point)
     #         # self._painter.drawPixmap(point)
     #         self._painter.end()
-        
+    def zoom_in(self, ammount=1):
+        factor = 1.25
+        self._zoom += ammount
+        if self._zoom > 0:
+            self.scale(factor, factor)
+        elif self._zoom == 0:
+            self.fitInView()
+        else:
+            self._zoom = 0
+
+    def zoom_out(self, ammount=1):
+        factor = 0.8
+        self._zoom -= ammount
+        if self._zoom > 0:
+            self.scale(factor, factor)
+        elif self._zoom == 0:
+            self.fitInView()
+        else:
+            self._zoom = 0
+
     def mouseReleaseEvent(self, event):
 
         if self.image is None:
