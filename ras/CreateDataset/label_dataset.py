@@ -4,7 +4,7 @@
 # Get rid of blue bar #DONE
 # Locate where the data saves #DONE
 # Zoom (Bind it to plus/minus as alternative) # DONE
-# Command z for deleting last interacted point
+# Command z for deleting last interacted point # DONE
 # Redo button
 
 
@@ -78,7 +78,7 @@ class App(QMainWindow):
         self.hover_point = None
         self.selected_point = None
          
-        self.current_polygon = None
+        # self.current_polygon = None
 
         self.dataset = Dataset()
         self.label_layouts = []
@@ -101,7 +101,8 @@ class App(QMainWindow):
             path = os.path.expanduser(os.getcwd()) + "/data/"
             print(path)
             self.get_folder(path)
-        except:
+        except Exception as e:
+            print(e)
             print("Could not load data folder, find it by yourself.")
         
         
@@ -168,7 +169,7 @@ class App(QMainWindow):
         self.setGeometry(self.left, self.top, self.width, self.height)
 
 
-        self.viewer = PhotoViewer(self, self.dataset)
+        self.viewer = PhotoViewer(self)
         self.setCentralWidget(self.viewer)
 
         # self.layout.setAlignment(Qt.AlignTop)
@@ -273,20 +274,10 @@ class App(QMainWindow):
         self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget().setHidden(False)
 
         print("INDEX:", index)
-        self.current_polygon = self.dataset.labels[index]
-        self.dataset.current_polygon = self.current_polygon
-        self.viewer.current_polygon = self.current_polygon
-        self.redraw()
-
-    def redraw(self):
-        '''
-        Resets to an original image and draws polygons, then updates the image
-        '''
-        self.viewer.redraw_image()
-        image = self.viewer.image
-        image = self.viewer.draw_polygons(image)
-        self.viewer.update_image(image)
-        
+        # self.current_polygon = self.dataset.labels[index]
+        self.dataset.current_polygon = self.dataset.labels[index]
+        # self.viewer.current_polygon = self.current_polygon
+        self.viewer.redraw_all()
 
     def create_new_label(self):
         #self.label_stack_layout
@@ -368,7 +359,7 @@ class App(QMainWindow):
         new_text = name_widget.text()
         self.dataset.current_polygon.set_label(new_text)
         self.label_list_widget.item(label_index).setText(new_text)
-        self.redraw()
+        self.viewer.redraw_all()
 
     def hide_all(self):
         for index in range(self.label_list_widget.count()):
@@ -390,7 +381,7 @@ class App(QMainWindow):
 
     def change_visible(self, index, set_value=None, visible_box=None):
         self.dataset.labels[index].view = not self.dataset.labels[index].view
-        self.redraw()
+        self.viewer.redraw_all()
         
     def show_labels_3D(self, index=None):
         '''
@@ -443,8 +434,8 @@ class App(QMainWindow):
         # Do this reguardless what the next item is
         self.dataset.delete_polygon(current_index, next_index=next_index)
         #Update viewer polygon to dataset's polygon
-        self.viewer.current_polygon = self.dataset.current_polygon
-        self.current_polygon = self.dataset.current_polygon
+        # self.viewer.current_polygon = self.dataset.current_polygon
+        # self.current_polygon = self.dataset.current_polygon
 
         # Hide deleted item
         self.label_list_widget.setRowHidden(current_index, True)
@@ -484,6 +475,14 @@ class App(QMainWindow):
 
         edit = bar.addMenu("Edit")
 
+        edit_undo = QAction("Undo", self)
+        edit_undo.triggered.connect(lambda: self.undo())
+        edit_undo.setShortcuts([QtGui.QKeySequence(Qt.CTRL + Qt.Key_Z)])
+
+        edit_redo = QAction("Redo", self)
+        edit_redo.triggered.connect(lambda: self.redo())
+        edit_redo.setShortcuts([QtGui.QKeySequence(Qt.CTRL + Qt.Key_Y)])
+
         edit_toggle = QAction("Toggle Edit Mode", self)
         edit_toggle.triggered.connect(lambda: self.viewer.toggle_edit())
         edit_toggle.setShortcuts([QtGui.QKeySequence(Qt.Key_E)])
@@ -491,6 +490,8 @@ class App(QMainWindow):
         edit_new_label = QAction("New Label", self)
         edit_new_label.triggered.connect(lambda: self.add_label())
 
+        edit.addAction(edit_undo)
+        edit.addAction(edit_redo)
         edit.addAction(edit_toggle)
         edit.addAction(edit_new_label)
         self.setMenuBar(bar)
@@ -524,16 +525,23 @@ class App(QMainWindow):
         view.addAction(increase_cursor)
         view.addAction(decrease_cursor)
 
-        
+    def undo(self):  
+        self.dataset.undo()
+        self.viewer.redraw_all()
+    
+    def redo(self):
+        self.dataset.redo()
+
     def add_label(self):
         print("Creating label")
-        if self.current_polygon is not None:
-            self.current_polygon.creating = False
+        if self.dataset.current_polygon is not None:
+            self.dataset.current_polygon.creating = False
         # self.dataset.create_polygon(utils.get_global_filename(self.current_folder, self.file_list[0]))
+        print(self.selected_file)
         self.dataset.create_polygon(self.selected_file)
         self.create_new_label()
         self.hide_labels()
-        self.viewer.set_polygon(self.dataset.current_polygon)
+        # self.viewer.set_polygon(self.dataset.current_polygon)
 
     def map_to_widget(self, widget, point):
         # gp = widget.mapToGlobal(QtCore.QPoint(0, 0))
@@ -588,10 +596,11 @@ class App(QMainWindow):
         self.viewer.image = None
         self.viewer.setPhoto(self.image)
         self.viewer.fitInView()
-        self.redraw()
+        self.viewer.redraw_all()
         self.label_clicked()
-        if self.o3d_vis is not None:
-            self.viewer.update_o3d_viewer()
+        self.viewer.update_o3d_viewer()
+        # if self.o3d_vis is not None:
+            
         
         # self.image = self.viewer.draw_polygons(self.image)
         # self.viewer.update_image(self.image)
@@ -636,6 +645,9 @@ class Dataset():
         # labels[filename] = (polygons, labels)
         self.file_labels = {}
 
+        self.states = []
+        self.previous_states = []
+
         self.labels = []
         self.current_polygon = None
         self.parent_polygon = None
@@ -651,6 +663,29 @@ class Dataset():
                                                 'Distance',
                                                 'TotalDistance',
                                                 ])
+
+    def undo(self):
+        print("UNDO")
+        if self.states:
+            polygon = self.states.pop()
+            self.labels[polygon.index] = polygon
+            self.labels[polygon.index].points = polygon.points
+            self.current_polygon = self.labels[polygon.index]
+            
+            # self.previous_states.append(self.labels)
+            # if len(self.previous_states) >= 20:
+            #     self.previous_states.pop(0)
+
+    def redo(self):
+        print("REDO")
+        # if len(self.previous_states) > 0:
+        #     self.labels = self.previous_states.pop()
+        #     self.states.append(self.labels)
+
+
+    def save_state(self):
+        print("Saving State")
+        self.states.append((deepcopy(self.current_polygon)) )
 
     def create_polygon(self, filename):
         label = LabelPolygon()
@@ -742,7 +777,7 @@ class Dataset():
         return self.labels[index]
     
     def delete_polygon(self, index, next_index):
-        
+        # self.save_state()
         print(next_index)
         #removes index from filelist
         for filename in self.file_labels.keys():
@@ -823,6 +858,8 @@ class LabelPolygon():
         self.index = None
         self.color = (random.randint(0, 255),random.randint(0, 255),random.randint(0, 255),0.5) #RGBA
 
+        self.queue_save = False
+
         # flag to see if polygon is being created
         self.creating = True
 
@@ -860,7 +897,7 @@ class LabelPolygon():
         """
         Creates a point in the polygon
         """
-
+        # self.queue_save = True
         self.points.append(location)
         self.calculate_mean()
 
@@ -872,12 +909,14 @@ class LabelPolygon():
         """
         Starts a new polygon (May not use?)
         """
+        self.queue_save = True
         self.creating = True
 
     def end_poly(self):
         """
-        Ends the polygon closing it up
+        Ends the polygon closing it upself.polygo
         """
+        self.queue_save = True
         self.creating = False
 
     def draw(self, image, infill=(0,0,255,0.5), show_label=True, show_points = True, show_lines = True):
@@ -937,6 +976,7 @@ class LabelPolygon():
         """
         Removes a point from the polygon
         """
+        self.queue_save = True
         for i, test_point in enumerate(self.points):
             if point == test_point:
                 self.points.pop(i)
@@ -1067,10 +1107,10 @@ CLASS PHOTOVIEWER
 class PhotoViewer(QGraphicsView):
     photoClicked = QtCore.pyqtSignal(QtCore.QPoint)
 
-    def __init__(self, parent, dataset):
+    def __init__(self, parent):
         super(PhotoViewer, self).__init__(parent)
         self.parent = parent
-        self.dataset = dataset
+        # self.dataset = dataset
         self.image = None
         self.original_img = None
         self._zoom = 0
@@ -1092,7 +1132,7 @@ class PhotoViewer(QGraphicsView):
         self.edit_mode = False
         self.mouse_pos = None
         self.selected_point = None
-        self.current_polygon = None
+        # self.current_polygon = None
         self.cursor_size = 1
 
         self.setDragMode(QGraphicsView.NoDrag)
@@ -1101,6 +1141,9 @@ class PhotoViewer(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         # self.update_visualizer()
+
+    def dataset(self):
+        return self.parent.dataset
 
     def start():
         pass
@@ -1129,7 +1172,7 @@ class PhotoViewer(QGraphicsView):
         self.setPhoto(image, self.q_image)
 
     def draw_polygons(self, image):
-        for polygon in self.dataset.labels:
+        for polygon in self.dataset().labels:
             if polygon.view is True:
                 image = polygon.draw(image)
         return image
@@ -1137,8 +1180,8 @@ class PhotoViewer(QGraphicsView):
     def toggle_edit(self):
         self.edit_mode = not self.edit_mode
 
-    def set_polygon(self, current_polygon):
-        self.current_polygon = current_polygon
+    # def set_polygon(self, current_polygon):
+        # self.current_polygon = current_polygon
 
     def hasPhoto(self):
         return not self._empty
@@ -1165,6 +1208,11 @@ class PhotoViewer(QGraphicsView):
         Used when drawing so objects are not redrawn infinitely. I.E mouse location
         '''
         self.image = deepcopy(self.original_img)
+
+    def redraw_all(self):
+        self.redraw_image()
+        self.update_image(self.draw_polygons(self.image))
+        self.update_o3d_viewer()
 
     def setPhoto(self, image, pixmap=None):
         if self.image is None:
@@ -1215,6 +1263,7 @@ class PhotoViewer(QGraphicsView):
             self.setDragMode(QGraphicsView.ScrollHandDrag)
 
     def mousePressEvent(self, event):
+
         if self.image is None:
             return
 
@@ -1231,22 +1280,26 @@ class PhotoViewer(QGraphicsView):
         mapped_point = (mapped_point.x(), mapped_point.y())
         self.mouse_pos = mapped_point
         # self.map_to_widget(self.image_frame, point)
-
         
-
-        if self.current_polygon is None:
+        if self.dataset().current_polygon is None:
             # print(self.parent.selected_file)
             self.parent.add_label()
             # self.dataset.create_polygon(self.parent.selected_file)
             # self.current_polygon = self.dataset.current_polygon
 
-        if self.current_polygon is not None:
+        if self.dataset().current_polygon is not None:
             
+            if self.dataset().current_polygon.queue_save is True:
+                self.parent.dataset.save_state()
+                self.dataset().current_polygon.queue_save = False
+
+
             if event.button() == Qt.LeftButton and not self.edit_mode:
                 print("Left Button Clicked")
-                self.current_polygon.assign_point(mapped_point)
+                self.dataset().save_state()
+                self.dataset().current_polygon.assign_point(mapped_point)
                 self.redraw_image()
-                image = self.current_polygon.draw(self.image)
+                image = self.dataset().current_polygon.draw(self.image)
                 
                 self.update_image(image)
                 self.update_distance(mapped_point)
@@ -1255,7 +1308,7 @@ class PhotoViewer(QGraphicsView):
                     print("Visualizer", self.parent.o3d_vis)
                     print("Updating visualizer")
                     
-                    points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
+                    points_3d = utils.get_3d_from_pairs(self.dataset().current_polygon.points, self.dataset().point_pairs)
                     poly = utils.o3d_polygon(points_3d)
                     utils.o3d_add_object(self.parent.o3d_vis, poly)
                     self.update_o3d_viewer()
@@ -1268,11 +1321,12 @@ class PhotoViewer(QGraphicsView):
             if event.button() == Qt.RightButton:
                 print("Right button clicked")
                 self.redraw_image()
-                point = self.current_polygon.check_near_point(mapped_point, dist=2)
-                self.current_polygon.remove_point(point)
+                self.dataset().save_state()
+                point = self.dataset().current_polygon.check_near_point(mapped_point, dist=2)
+                self.dataset().current_polygon.remove_point(point)
                 self.selected_point = None
                 
-                image = self.current_polygon.draw(self.image)
+                image = self.dataset().current_polygon.draw(self.image)
                 self.update_image(image)
 
                 '''
@@ -1290,7 +1344,7 @@ class PhotoViewer(QGraphicsView):
             if event.buttons() == QtCore.Qt.LeftButton and self.edit_mode:
                 
                 #Distance for selected point (should match mouse move event and change colour to indicate accurate selection)
-                point = self.current_polygon.check_near_point(mapped_point, dist=2)
+                point = self.dataset().current_polygon.check_near_point(mapped_point, dist=2)
                 self.selected_point = point
                 
 
@@ -1342,7 +1396,7 @@ class PhotoViewer(QGraphicsView):
             self._zoom = 0
 
     def mouseReleaseEvent(self, event):
-
+        
         if self.image is None:
             return
 
@@ -1354,14 +1408,20 @@ class PhotoViewer(QGraphicsView):
         print("dropped")
 
 
-        
-        if self.current_polygon is not None:
+
+        if self.dataset().current_polygon is not None:
+
+            if self.dataset().current_polygon.queue_save is True:
+                self.dataset().save_state()
+                self.dataset().current_polygon.queue_save = False
+
             if self.selected_point is not None and self.edit_mode:
                 self.redraw_image()
-                self.current_polygon.edit_point(self.selected_point, mapped_point)
+                self.dataset().save_state()
+                self.dataset().current_polygon.edit_point(self.selected_point, mapped_point)
 
-            if self.parent.o3d_vis is not None:
-                self.update_o3d_viewer()
+            # if self.parent.o3d_vis is not None:
+            self.update_o3d_viewer()
 
             # image = self.current_polygon.draw(self.image)
             image = self.draw_polygons(self.image)
@@ -1370,20 +1430,21 @@ class PhotoViewer(QGraphicsView):
             
 
     def update_o3d_viewer(self):
-        cleard = self.parent.o3d_vis.clear_geometries()
-        # print("Cleared: ", cleard)
-        utils.o3d_add_object(self.parent.o3d_vis, [self.parent.dataset.cloud])
+        if self.parent.o3d_vis is not None:
+            cleard = self.parent.o3d_vis.clear_geometries()
+            # print("Cleared: ", cleard)
+            utils.o3d_add_object(self.parent.o3d_vis, [self.parent.dataset.cloud])
 
-        if self.current_polygon:
-            points_3d = utils.get_3d_from_pairs(self.current_polygon.points, self.dataset.point_pairs)
-            poly = utils.o3d_polygon(points_3d)
-            utils.o3d_add_object(self.parent.o3d_vis, poly)
+            if self.dataset().current_polygon:
+                points_3d = utils.get_3d_from_pairs(self.dataset().current_polygon.points, self.dataset().point_pairs)
+                poly = utils.o3d_polygon(points_3d)
+                utils.o3d_add_object(self.parent.o3d_vis, poly)
 
-        # Cursor location
-        pointer_3d = utils.get_3d_from_pairs([self.mouse_pos], self.dataset.point_pairs)
-        if len(pointer_3d) >= 1:
-            pointer_box = utils.o3d_box(pointer_3d[0])
-            utils.o3d_add_object(self.parent.o3d_vis, [pointer_box])
+            # Cursor location
+            pointer_3d = utils.get_3d_from_pairs([self.mouse_pos], self.dataset().point_pairs)
+            if len(pointer_3d) >= 1:
+                pointer_box = utils.o3d_box(pointer_3d[0])
+                utils.o3d_add_object(self.parent.o3d_vis, [pointer_box])
 
 
 
@@ -1419,8 +1480,8 @@ class PhotoViewer(QGraphicsView):
             self.redraw_image()
             image = cv2.circle(image, mapped_point, radius=self.cursor_size, color=(int(255-b),int(255-g),int(255-r)), thickness=1)
 
-            if mapped_point in self.dataset.point_pairs.keys():
-                point, colour = self.dataset.point_pairs[mapped_point]
+            if mapped_point in self.dataset().point_pairs.keys():
+                point, colour = self.dataset().point_pairs[mapped_point]
                 # print(point[2])
                 image = cv2.putText(image, text=(str((point[2]/1000)) + "m"), org=mapped_point, fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=(int(255-b),int(255-g),int(255-r)),thickness=1, lineType=cv2.LINE_AA)
             # image = cv2.rectangle(self.image, mapped_point, mapped_point, (255-b,255-g,255-r))
@@ -1434,9 +1495,9 @@ class PhotoViewer(QGraphicsView):
 
         if event.buttons() == QtCore.Qt.NoButton:
 
-            if self.current_polygon is not None:
+            if self.dataset().current_polygon is not None:
                 #Check when hovering is within distance value to change colour
-                point = self.current_polygon.check_near_point(mapped_point, dist=2)
+                point = self.dataset().current_polygon.check_near_point(mapped_point, dist=2)
 
                 #When hovering over point
                 if point is not None:
@@ -1460,23 +1521,28 @@ class PhotoViewer(QGraphicsView):
 
             print("dragging")
             # if event.button() == Qt.LeftButton:
-            if self.current_polygon is not None:
+            if self.dataset().current_polygon is not None:
+
+                if self.dataset().current_polygon.queue_save is True:
+                    self.dataset().save_state()
+                    self.dataset().current_polygon.queue_save = False
+
                 #Check if hover is within distance for assigning a point (distance between new points, used for hold and drag assignment)
-                point = self.current_polygon.check_near_point(mapped_point,dist=5)
+                point = self.dataset().current_polygon.check_near_point(mapped_point,dist=5)
 
                 if point is None and not self.edit_mode:
                     self.redraw_image()
-                    self.current_polygon.assign_point(mapped_point)
-                    image = self.current_polygon.draw(self.image)
+                    self.dataset().current_polygon.assign_point(mapped_point)
+                    image = self.dataset().current_polygon.draw(self.image)
                     self.update_image(image)
 
             #If edit mode and point is selected
             if self.edit_mode is True and self.selected_point is not None:
-                adjacent_points = self.current_polygon.get_adjacent(self.selected_point)
+                adjacent_points = self.dataset().current_polygon.get_adjacent(self.selected_point)
                 #if there is an adjacent point
                 if adjacent_points[0] is not None or adjacent_points[1] is not None:
                     self.redraw_image()
-                    image = self.current_polygon.draw(self.image)
+                    image = self.dataset().current_polygon.draw(self.image)
                     if adjacent_points[0] is not None:
                         image = cv2.line(image, adjacent_points[0], mapped_point, (0,255,255), 1)
                     if adjacent_points[1]is not None:
@@ -1497,16 +1563,16 @@ class PhotoViewer(QGraphicsView):
 
     def update_distance(self, mapped_point, editing=False):
         # print("updating distance")
-        if self.current_polygon is not None:
-            if len(self.current_polygon.points) >= 1:
+        if self.dataset().current_polygon is not None:
+            if len(self.dataset().current_polygon.points) >= 1:
 
-                total_distance = utils.get_total_distance(self.dataset.point_pairs, self.current_polygon.points)
-                print(total_distance)
+                total_distance = utils.get_total_distance(self.dataset().point_pairs, self.dataset().current_polygon.points)
+                # print(total_distance)
                 self.parent.get_current_info_widgets(3).setText(("Total Distance: " + str(total_distance/10) + "cm"))       
 
                 # Measure the distance between points
                 p2 = mapped_point
-                p1 = self.current_polygon.points[-1]
+                p1 = self.dataset().current_polygon.points[-1]
         
                 # if editing and len(self.current_polygon.points) >= 2:
                     # p2 = mapped_point
@@ -1515,8 +1581,8 @@ class PhotoViewer(QGraphicsView):
                 #     p1 = self.current_polygon.points[-2]
                 #     p2 = self.current_polygon.points[-1]
 
-                if p1 in self.dataset.point_pairs.keys() and p2 in self.dataset.point_pairs.keys():
-                    distance = utils.get_distance_2D(self.dataset.point_pairs, p1, p2)
+                if p1 in self.dataset().point_pairs.keys() and p2 in self.dataset().point_pairs.keys():
+                    distance = utils.get_distance_2D(self.dataset().point_pairs, p1, p2)
                     self.parent.get_current_info_widgets(2).setText(("Distance: " + str(distance/10) + "cm"))
 
 
@@ -1533,8 +1599,6 @@ def display_2D():
 def display_3d():
     pass
 
-def create_polygon():
-    pass
 
 def label_polygon():
     pass
