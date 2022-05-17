@@ -499,7 +499,7 @@ class App(QMainWindow):
         self.setMenuBar(bar)
 
 
-        view = bar.addMenu("view")
+        view = bar.addMenu("View")
 
         increase_cursor = QAction("Incerase Cursor", self)
         increase_cursor.triggered.connect(lambda: self.viewer.increase_cursor())
@@ -527,14 +527,14 @@ class App(QMainWindow):
         view.addAction(increase_cursor)
         view.addAction(decrease_cursor)
 
-        help = bar.addMenu("help")
+        help = bar.addMenu("Help")
 
         wiki = QAction("Help Page", self)
         wiki.triggered.connect(lambda: webbrowser.open('https://github.com/hobbitsyfeet/RemoteAnimalScan/wiki/Buddy-Measure-User-Guide'))
 
         help.addAction(wiki)
 
-        
+
     def undo(self):  
         self.dataset.undo()
         self.viewer.redraw_all()
