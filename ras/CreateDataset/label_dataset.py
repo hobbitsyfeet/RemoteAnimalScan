@@ -43,6 +43,8 @@ import random
 from viewer import Action_Poll
 
 import pandas as pd
+
+import webbrowser # To open help menu
 # import pandas as pd
 '''
 ######################################################################
@@ -525,12 +527,21 @@ class App(QMainWindow):
         view.addAction(increase_cursor)
         view.addAction(decrease_cursor)
 
+        help = bar.addMenu("help")
+
+        wiki = QAction("Help Page", self)
+        wiki.triggered.connect(lambda: webbrowser.open('https://github.com/hobbitsyfeet/RemoteAnimalScan/wiki/Buddy-Measure-User-Guide'))
+
+        help.addAction(wiki)
+
+        
     def undo(self):  
         self.dataset.undo()
         self.viewer.redraw_all()
     
     def redo(self):
         self.dataset.redo()
+        self.viewer.redraw_all()
 
     def add_label(self):
         print("Creating label")
@@ -657,6 +668,10 @@ class Dataset():
         self.point_pairs = None
         self.inverse_pairs = None
         self.cloud = None
+
+        self.redone = False
+        self.undone = False
+
         self.dataframe = pd.DataFrame(columns=['Participant',
                                                 'Filename',
                                                 'Points',
@@ -665,22 +680,30 @@ class Dataset():
                                                 ])
 
     def undo(self):
-        print("UNDO")
+        # print("UNDO")
         if self.states:
+            self.previous_states.append(self.states[-1])
             polygon = self.states.pop()
-            self.labels[polygon.index] = polygon
-            self.labels[polygon.index].points = polygon.points
-            self.current_polygon = self.labels[polygon.index]
             
-            # self.previous_states.append(self.labels)
-            # if len(self.previous_states) >= 20:
-            #     self.previous_states.pop(0)
+            print(polygon.points)
+            self.labels[polygon.index] = polygon
+            self.current_polygon = self.labels[polygon.index]
+            # self.previous_states.append(self.current_polygon)
+            # self.previous_states.append(self.current_polygon)
+            if len(self.previous_states) >= 200:
+                self.previous_states.pop(0)
 
     def redo(self):
-        print("REDO")
-        # if len(self.previous_states) > 0:
-        #     self.labels = self.previous_states.pop()
-        #     self.states.append(self.labels)
+        # print("REDO")
+        if self.previous_states:
+            polygon = self.previous_states.pop()
+            print(polygon.points)
+            # print(len(self.previous_states))
+            self.labels[polygon.index] = polygon
+            self.current_polygon = self.labels[polygon.index]
+            self.states.append(polygon)
+            
+            
 
 
     def save_state(self):
