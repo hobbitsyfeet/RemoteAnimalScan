@@ -733,7 +733,7 @@ class Dataset():
             self.file_labels[filename] = [label.index] 
             print("NEW LABEL",label.index, self.file_labels.keys() , self.file_labels[filename])
         
-    def export_label(self, polygon, point_pairs, participant):
+    def export_label(self, polygon, point_pairs, participant, save_filename):
         '''
         'Participant': Name of participant/user
         'Filename': Filename which polygon resides
@@ -750,34 +750,34 @@ class Dataset():
 
         total_distance = utils.get_total_distance(point_pairs, points)/10
         filename = self.get_filename(polygon)
-
-        filename = QFileDialog.getSaveFileName(None, 'Save File', "", "CSV (*.csv)")[0]
+        # filename = QFileDialog.getSaveFileName(None, 'Save File', "", "CSV (*.csv)")[0]
         # csv_path = filename.split('.')[0] + '.csv'
-        csv_path = participant + '.csv'
+        # csv_path = participant + '.csv'
 
         
         data = [participant, filename, points, distance, total_distance]
 
         self.dataframe.loc[0] = data
         try:
-            if os.path.isfile(filename):
-                export_csv = self.dataframe.to_csv (filename, index = None, header=False, mode='a')
+            if os.path.isfile(save_filename):
+                export_csv = self.dataframe.to_csv (save_filename, index = None, header=False, mode='a')
             else:
-                export_csv = self.dataframe.to_csv (filename, index = None, header=True, mode='w')
-
+                export_csv = self.dataframe.to_csv (save_filename, index = None, header=True, mode='w')
             print("Save Complete")
         except Exception as e:
             print(e)
-            print("Make sure you do not have", filename,  "open.")
+            print("Make sure you do not have", save_filename,  "open.")
 
     def export_all_labels(self, participant, current_folder):
+        
+        save_filename = QFileDialog.getSaveFileName(None, 'Save File', "", "CSV (*.csv)")[0]
         for polygon in self.labels:
             filename = self.get_filename(polygon)
             load_file = utils.get_global_filename(current_folder, filename)
             
             loaded, image, depth, point_pairs,  points, colours = utils.load_projected(load_file)
             print(loaded, point_pairs)
-            self.export_label(polygon, point_pairs, participant)
+            self.export_label(polygon, point_pairs, participant, save_filename)
 
     
     def get_filename(self, polygon):
