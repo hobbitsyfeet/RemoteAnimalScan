@@ -131,6 +131,5 @@ dmypy.json
 dependencies
 env37
 *.ply
-*.PNG
 *.jpeg
 *.jpg

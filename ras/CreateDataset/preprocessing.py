@@ -21,10 +21,10 @@ def numpy_to_o3d(np_cloud_points, np_cloud_colors=None, np_cloud_normals=None):
     o3d_cloud = o3d.geometry.PointCloud()
     o3d_cloud.points = o3d.utility.Vector3dVector(np_cloud_points)
     if np_cloud_colors is not None:
-        o3d_cloud.colors = o3d.utility.Vector3iVector(np_cloud_colors)
+        o3d_cloud.colors = o3d.utility.Vector3dVector(np_cloud_colors)
     if np_cloud_normals is not None:
         o3d_cloud.normals = o3d.utility.Vector3dVector(np_cloud_normals)
-    o3d.visualization.draw_geometries([downpcd])
+    # o3d.visualization.draw_geometries([downpcd])
     return o3d_cloud
 
 #FEATURES
@@ -175,7 +175,8 @@ def combine_ply_from_folder(file_list, labels):
             for index, cloud in enumerate(group):
                 #Load and join pointclouds
                 pcd_cloud = o3d.io.read_point_cloud(cloud)
-                merged_cloud = merged_cloud + pcd_cloud
+                
+                merged_cloud += pcd_cloud
 
                 # Grab labels from the group like (0,"Head") from Head.ply
                 group_labels = get_labels([cloud], labels) 
@@ -191,7 +192,7 @@ def combine_ply_from_folder(file_list, labels):
     return cloud_list, label_list
     
             
-def downsample_random(cloud, labels, num_points=500, print_down_labels = False, seed=None):
+def downsample_random(cloud, labels, num_points=500, print_down_labels = False, seed=None, features=[]):
     """
     Downsample using Random Sample method.
     Value is the number of points to downsample to.
@@ -199,26 +200,43 @@ def downsample_random(cloud, labels, num_points=500, print_down_labels = False, 
 
     It is sugguested to reassign number of points
     """
+    print(get_num_points(cloud))
+    print("CLOUD NORMALS",cloud.normals)
+    assert(num_points <= get_num_points(cloud))
+
     if seed is not None:
         random.seed(random.random())
     else:
         random.seed(seed)
     sampled_labels = []
     points, colors, normals = o3d_to_numpy(cloud)
+    print(len(points))
+    print(len(colors))
+    print(len(normals))
     
-    sampled_points = random.sample(points, num_points)
-    sampled_colors = random.sample(colors, num_points)
-    sampled_normals = random.sample(normals, num_points)
+    sampled_points = random.sample(list(points), num_points)
+    if COLOR in features:
+        print(" - Including features: COLORS")
+        sampled_colors = random.sample(list(colors), num_points)
+    else: 
+        sampled_colors = None
+    if NORMAL in features:
+        print(" - Including features: NORMALS")
+        sampled_normals = random.sample(list(normals), num_points)
+    else: 
+        sampled_normals = None
+    print(labels)
+    sampled_labels = random.sample(list(labels), num_points)
 
-    sampled_labels = random.sample(labels, num_points)
+    
     sparse_pcd = numpy_to_o3d(sampled_points, sampled_colors, sampled_normals)
 
     print("Before Downsample: ", cloud, end=" | ")
-    print("After Downsample: Pointcloud with ", len(sparse_pcd[0].points), "points." )
+    print("After Downsample: Pointcloud with ", sparse_pcd.points, "points." )
 
     return sparse_pcd, sampled_labels
 
-def downsample_voxel(cloud, labels, method=VOXEL_SAMPLE, voxel_size=0.5, print_down_labels = False):
+def downsample_voxel(cloud, labels, method=VOXEL_SAMPLE, voxel_size=0.5, print_down_labels = False, features=[]):
     """
     Downsamples points based on a voxel grid (3D space divided into a grid).
     
@@ -263,9 +281,10 @@ def downsample_voxel(cloud, labels, method=VOXEL_SAMPLE, voxel_size=0.5, print_d
             print("Cubic Labels", cubic_labels, end=" -> ")
             print(sampled_labels[-1])
 
+
     return sparse_pcd, sampled_labels
     
-def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5, print_down_labels = False):
+def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5, print_down_labels = False, features=[]):
     """
     Downsamples pointcloud by specified method. Value is the downsample scale which
 
@@ -275,10 +294,10 @@ def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5, print_down_labels 
     
 
     if method == RANDOM_SAMPLE:
-        sparse_pcd, sampled_labels = downsample_random(cloud, value)
+        sparse_pcd, sampled_labels = downsample_random(cloud, labels, num_points=value, print_down_labels = False, seed=None, features=features)
     
     elif method == VOXEL_SAMPLE:
-       sparse_pcd, sampled_labels = downsample_voxel(cloud, labels, voxel_size=value, print_down_labels = print_down_labels)
+       sparse_pcd, sampled_labels = downsample_voxel(cloud, labels, voxel_size=value, print_down_labels = print_down_labels, features = features)
             
     if print_down_labels:
         print("Sampled Labels", sampled_labels)
@@ -314,6 +333,8 @@ def normalize(cloud, method=MINMAX):
 
     #Extract the points into numpy
     points, colors, normals = o3d_to_numpy(cloud)
+    print("COLORS 2")
+    print(colors)
 
     scaler.fit(points)
     points = scaler.transform(points)
@@ -333,14 +354,17 @@ def test_train_split(pointcloud_list, test_split=33, seed=42):
     """
     pass
 
-def export_hdf5(filename, cloud_list, labels, point_num, max_points):
+def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]):
     """
     test_list: list of pointclouds which are split into the test sample
     train_list: list of pointclouds which are split into the train sample
 
     test_labels: A list which contains per-point labels(int) for each pointcloud. Eg [cloud1[0,0,0 ... 0], cloud2[2,2 .. 2] ]. Each inner list contains per-point labels  
+    Features: [{feature_name, dimension}]
     """
+
     data_h5 = np.zeros((len(cloud_list), max_points, 3))
+
     colors_h5 = np.zeros((len(cloud_list), max_points, 3))
     normals_h5 = np.zeros((len(cloud_list), max_points, 3))
     labels_h5 = np.zeros((len(cloud_list), max_points))
@@ -354,7 +378,6 @@ def export_hdf5(filename, cloud_list, labels, point_num, max_points):
             # print(np_cloud_normals)
             data_h5[index, point_index] = point
             colors_h5[index, point_index] = np_cloud_colors[point_index]
-
             normals_h5[index, point_index] = np_cloud_normals[point_index]
             labels_h5[index, point_index] = labels[index][point_index]
          

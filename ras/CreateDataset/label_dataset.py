@@ -10,7 +10,6 @@
 
 
 
-from ctypes import alignment
 from datetime import datetime
 from fileinput import filename
 
@@ -33,16 +32,24 @@ from PyQt5.QtGui import QPainter, QBrush, QPen
 from PyQt5.QtCore import QThread, QObject, pyqtSignal
 
 from copy import deepcopy
-from plyfile import PlyData, PlyElement
+
 import os
+# from ras.CreateDataset.labeling.dataset import Dataset
+
+# from sklearn import cross_decomposition
 # from ras.CreateDataset.utils import o3d_add_object
-import utils
+from labeling import utils
 
 import random
 
 from viewer import Action_Poll
+# import label_scores
 
 import pandas as pd
+
+from labeling.dataset import Dataset
+from labeling.scores import LabelScore
+
 
 import webbrowser # To open help menu
 # import pandas as pd
@@ -53,6 +60,14 @@ CLASS APP
 
 ######################################################################
 '''
+
+# Labeling modes
+LABEL_POLYGON = 0
+LABEL_LINE = 1
+LABEL_RECTANGLE = 2
+LABEL_ELIPSE = 3
+
+
 #class App(QWidget):
 class App(QMainWindow):
     stop_signal = pyqtSignal()  # make a stop signal to communicate with the worker in another thread
@@ -70,23 +85,32 @@ class App(QMainWindow):
         self.width = 1280
         self.height = 720
         self.zoom_height = 480
+        self.autosave = True
 
         self.file_list = []
         self.selected_file = ""
 
         self.edit_mode = False
+        self.label_mode = LABEL_LINE
         self.mouse_pos = (0,0)
 
         self.hover_point = None
         self.selected_point = None
-         
+
+        self.training_mode = False
+        # self.labeled_scores = label_scores() # Scoring object to record progress made for practice labelling
         # self.current_polygon = None
 
         self.dataset = Dataset()
+        self.training_datast = Dataset()
+        self.testing_dataset = Dataset()
+
         self.label_layouts = []
 
         self.o3d_vis = None
+        # self.o3d = None
         self.threads = []
+        self.worker = None
 
         self.init_buttons()
         self.initUI()
@@ -133,12 +157,12 @@ class App(QMainWindow):
     def create_thread(self, visualizer):
         self.o3d_vis = visualizer
         thread = QThread()
-        worker = Action_Poll(parent=self)
-        worker.moveToThread(thread)
-        thread.started.connect(lambda: worker.poll_actions(self.o3d_vis))
+        self.worker = Action_Poll(parent=self)
+        self.worker.moveToThread(thread)
+        thread.started.connect(lambda: self.worker.poll_actions(self.o3d_vis))
         # worker.updatedBalance.connect(self.updateBalance)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
+        self.worker.finished.connect(thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         return thread
     
@@ -187,23 +211,77 @@ class App(QMainWindow):
         
         #self.body_horizontal.addWidget(self.viewer)
 
+        self.tool_buttton_dock = QDockWidget("Tool Types")
+        self.tool_bar_widget = QWidget()
+        # self.tool_bar_widget.setFixedHeight(90)
+
+        toolbar_layout = QHBoxLayout()
+        self.tool_bar_widget.setLayout(toolbar_layout)
+
+        self.tool_toggle_edit = QToolButton()
+        self.tool_toggle_edit.clicked.connect(lambda: self.toggle_edit_button())
+        self.tool_toggle_edit.setToolTip("Currently Drawing. Click to Edit")
+        self.tool_toggle_edit.setIcon(QIcon('icons/color-line.png'))
+        self.tool_toggle_edit.setIconSize(QtCore.QSize(50,50))
+        self.tool_toggle_edit.setText("ToggleEdit")
+
+
+        toolbar_layout.addWidget(self.tool_toggle_edit)
+        self.tool_buttton_dock.setWidget(self.tool_bar_widget)
+        Qt.LeftDockWidgetArea
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.tool_buttton_dock)
+
+
         self.dock = QDockWidget("File List")
         self.dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         
 
+        # Tool Types
+        # LABEL_POLYGON = 0
+        # LABEL_LINE = 1
+        # LABEL_RECTANGLE = 2
+        # LABEL_ELIPSE = 3
+
+        
+        # tool_button_polygon = QToolButton()
+        # tool_button_polygon.clicked.connect(lambda: self.set_label_mode(LABEL_POLYGON))
+        # tool_button_polygon.setToolTip("Polygon Selection Tool")
+        # tool_button_polygon.setIcon(QIcon('Polygon_icon.png'))
+        # tool_button_polygon.setIconSize(QtCore.QSize(70,70))
+        # tool_button_polygon.setText("Polygon Tool")
+
+        # tool_button_line = QToolButton()
+        # tool_button_line.clicked.connect(lambda: self.set_label_mode(LABEL_LINE))
+        # tool_button_line.setToolTip("Line Selection Tool")
+        # tool_button_line.setIcon(QIcon('Line_icon.png'))
+        # tool_button_line.setIconSize(QtCore.QSize(70,70))
+        # tool_button_line.setText("Line Tool")
+
+        # tool_button_rectangle = QToolButton()
+        # tool_button_rectangle.setToolTip("Rectangle Selection Tool")
+
+        # tool_button_elipse = QToolButton()
+        # tool_button_elipse.setToolTip("Elispe Selection Tool")
+
+        # toolbar_layout.addWidget(tool_button_polygon)
+        # toolbar_layout.addWidget(tool_button_line)
+        # toolbar_layout.addWidget(tool_button_rectangle)
+
+
+
     
         self.body_horizontal.addLayout(self.right_body)
         # fileListLayout = QVBoxLayout()
         self.file_list_widget = QListWidget()
-        self.file_list_widget.itemDoubleClicked.connect(self.open_ply)
+        self.file_list_widget.itemDoubleClicked.connect(self.open_selected_file)
         self.dock.setWidget(self.file_list_widget)
 
 
         self.label_list_dock = QDockWidget("Label List")
         self.label_list_widget = QListWidget()
 
-        # self.label_list_widget.itemDoubleClicked.connect(self.open_ply) #To set the label Info Widget
+        # self.label_list_widget.itemDoubleClicked.connect(self.open_selected_file) #To set the label Info Widget
         self.label_list_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.label_list_dock.setWidget(self.label_list_widget)
         
@@ -244,6 +322,21 @@ class App(QMainWindow):
         # self.add_label() 
         self.show()
     
+    def toggle_edit_button(self, toggle_edit_menu):
+        
+        self.edit_mode = not self.edit_mode
+        toggle_edit_menu.setChecked(self.edit_mode)
+        self.viewer.toggle_edit()
+        if self.edit_mode:
+            self.tool_toggle_edit.setIcon(QIcon("icons/edit.png"))
+            self.tool_toggle_edit.setToolTip("Currently Editing. Click to Draw")
+        else:
+            self.tool_toggle_edit.setIcon(QIcon("icons/color-line.png"))
+            self.tool_toggle_edit.setToolTip("Currently Drawing. Click to Edit")
+
+    def set_label_mode(self, mode):
+        self.label_mode = mode
+
     def hide_labels(self):
         '''
         Hides labels on label_list_widget by filenames that exist in dataset
@@ -265,8 +358,6 @@ class App(QMainWindow):
 
     def label_clicked(self):
         self.hide_labels()
-
-
 
         index = self.label_list_widget.currentRow()
         self.label_stack_layout.setCurrentIndex(index)
@@ -316,6 +407,9 @@ class App(QMainWindow):
         delete.clicked.connect(lambda: self.delete_pressed())
         preview = QPushButton("Preview")
 
+        test = QPushButton("Test")
+        test.clicked.connect(lambda: self.test_training_poly())
+
         label_info_layout.addWidget(label_name)
         label_info_layout.addWidget(label_id)
         label_info_layout.addWidget(distance_label)
@@ -324,10 +418,11 @@ class App(QMainWindow):
         label_info_layout.addWidget(parent_label)
         label_info_layout.addWidget(delete)
         label_info_layout.addWidget(preview)
+        label_info_layout.addWidget(test)
 
         item = QListWidgetItem()
         item.setText(("Label_" + str(count)))
-        item.setCheckState(2)
+        # item.setCheckState(2)
         print(count)
     
 
@@ -360,7 +455,11 @@ class App(QMainWindow):
         print("SELECTED")
         new_text = name_widget.text()
         self.dataset.current_polygon.set_label(new_text)
-        self.label_list_widget.item(label_index).setText(new_text)
+        try:
+            self.label_list_widget.item(label_index).setText(new_text)
+        except Exception as e:
+            print(e)
+            print("Could not change name on item that does not exist")
         self.viewer.redraw_all()
 
     def hide_all(self):
@@ -460,17 +559,39 @@ class App(QMainWindow):
         self.header.addWidget(bar)
         
         file = bar.addMenu("File")
+
         open_file = QAction("Open File", self)
 
         open_folder = QAction("Open Folder", self)
         open_folder.triggered.connect(lambda: self.get_folder())
         
+
+        load_csv = QAction("Load from CSV", self)
+        load_csv.triggered.connect(lambda: self.load_labels())
+
+        load_training_dataset = QAction("Load training dataset", self)
+        load_training_dataset.triggered.connect(lambda: self.load_labels(show_ui=False, dataset=self.training_datast))
+
+
+        load_testing_dataset = QAction("Load testing dataset", self)
+        load_testing_dataset.triggered.connect(lambda: self.load_labels(show_ui=False, dataset=self.testing_dataset))
+        # export_all.triggered.connect(lambda: pass))
+
         export_all = QAction("Export All", self)
         export_all.triggered.connect(lambda: self.dataset.export_all_labels(self.user, self.current_folder))
+
+        autosave = QAction("Autosave", self, checkable=True)
+        autosave.setChecked(True)
+        autosave.triggered.connect(lambda: self.toggle_autosave())
         
         file.addAction(open_file)
         file.addAction(open_folder)
+        file.addAction(load_csv)
+        file.addAction(load_training_dataset)
+        file.addAction(load_testing_dataset)
         file.addAction(export_all)
+
+        file.addAction(autosave)
 
 
 
@@ -485,17 +606,25 @@ class App(QMainWindow):
         edit_redo.triggered.connect(lambda: self.redo())
         edit_redo.setShortcuts([QtGui.QKeySequence(Qt.CTRL + Qt.Key_Y)])
 
-        edit_toggle = QAction("Toggle Edit Mode", self)
-        edit_toggle.triggered.connect(lambda: self.viewer.toggle_edit())
+        edit_toggle = QAction("Toggle Edit Mode", self, checkable=True)
+        edit_toggle.setChecked(False)
+        edit_toggle.triggered.connect(lambda: self.toggle_edit_button(edit_toggle))
         edit_toggle.setShortcuts([QtGui.QKeySequence(Qt.Key_E)])
 
         edit_new_label = QAction("New Label", self)
         edit_new_label.triggered.connect(lambda: self.add_label())
 
+        edit_remove_point = QAction("Remove Point", self)
+        edit_remove_point.triggered.connect(lambda: self.dataset.remove_point(self.viewer))
+        edit_remove_point.setShortcuts([QtGui.QKeySequence(Qt.Key_Backspace)])
+
+
         edit.addAction(edit_undo)
         edit.addAction(edit_redo)
         edit.addAction(edit_toggle)
         edit.addAction(edit_new_label)
+        edit.addAction(edit_remove_point)
+
         self.setMenuBar(bar)
 
 
@@ -543,13 +672,55 @@ class App(QMainWindow):
         self.dataset.redo()
         self.viewer.redraw_all()
 
+    def toggle_autosave(self):
+        self.autosave = not self.autosave
+    
+    def load_labels(self, show_ui=True, dataset=None):
+        "Loads points onto filename"
+
+        if dataset is None:
+            dataset = self.dataset
+            
+        filename = str(QFileDialog.getOpenFileName(self, "Select CSV", )[0])
+
+        csv = pd.read_csv(filename)
+        # Iterate through each row. One row is one polygon.
+        for index, row in csv.iterrows():
+            print(index)
+            target_file = row["Filename"]
+            print(target_file)
+            self.selected_file = target_file
+            points = row["Points"]
+
+            # Parse Points from text to list of tuples
+            points = eval(points)
+
+            # Create polygon at target_filename
+            label_index = dataset.create_polygon(target_file)
+
+            # Apply points to appropriate filename
+            dataset.assign_polygon(label_index, points)
+            
+            if show_ui:
+                # Covers the UI portion of the label
+                self.create_new_label()
+                self.show_selected_file()
+            else:
+                # Hide the label
+                dataset.labels[label_index].view = False
+
+            # Creating mode false (closes polygon)
+            dataset.labels[label_index].creating = False
+
+        print("Labels loaded.")
+
     def add_label(self):
         print("Creating label")
         if self.dataset.current_polygon is not None:
             self.dataset.current_polygon.creating = False
         # self.dataset.create_polygon(utils.get_global_filename(self.current_folder, self.file_list[0]))
         print(self.selected_file)
-        self.dataset.create_polygon(self.selected_file)
+        index = self.dataset.create_polygon(self.selected_file)
         self.create_new_label()
         self.hide_labels()
         # self.viewer.set_polygon(self.dataset.current_polygon)
@@ -566,10 +737,19 @@ class App(QMainWindow):
     def toggle_edit(self):
         self.edit_mode = not self.edit_mode
 
-    def open_ply(self):
-        
+    def open_selected_file(self):
+        '''
+        The main function which loads selected_file into the active screen to label.
+        '''
         # file = self.file_list_widget.item(0).text()
+        
+        # Check if polygons have not been saved, if not, save them
+        print("DATASET IS EMPTY?: ", self.dataset.empty())
+        if self.autosave and not self.dataset.empty():
+            self.dataset.export_all_labels(self.user, self.current_folder, use_previous_path=True)
+        
         self.selected_file = self.file_list_widget.selectedItems()[0].text()
+        # self.dataset.current_file = self.selected_file
         print(self.selected_file[0])
         extention = self.selected_file.split('.')[-1]
 
@@ -622,6 +802,18 @@ class App(QMainWindow):
         print(str((folder + "/" + filename)))
         return str((folder + "/" + filename))
 
+    def get_filename_index(self, filename):
+        for index, item in self.file_list_widget.items():
+            if str(item) == filename:
+                return index
+        return None
+
+    def get_file_by_index(self, file_index):
+        for index, item in self.file_list_widget.items():
+            if file_index == index:
+                return item
+        return None
+
     def get_folder(self, foldername = None):
         if foldername is None:
             self.current_folder = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
@@ -640,489 +832,109 @@ class App(QMainWindow):
         
         print("Loaded",  self.file_list)
 
+    def load_random(self):
+        '''
+        Load random will take a random file in the testing set and load it for the user.
+        '''
+        file_list = self.file_list_widget.items()
+        index = random.randrange(0, len(file_list))
+        self.selected_file = file_list[index]
+        self.open_selected_file()
 
-'''
-######################################################################
-CLASS DATASET
+    def test_training_poly(self):
+        '''
+        Tests if both points fall within a testing polygon
+        '''
+        if self.training_datast.empty():
+            print("Training dataset is empty. Load a dataset and try again.")
+            return
+        # Get current polygon
+        test_polygon = self.dataset.current_polygon
 
+        if len(test_polygon.points) < 2:
+            print("You must assign a polygon with 2 points to test first.")
+            return
+        both_test = False
 
-######################################################################
-'''
-class Dataset():
-    def __init__(self):
-        # self.labels = []
-        # self.polygons = []
+        smallest_index = 0
+        # Get polygon from the same file
+        for train_file in self.training_datast.file_labels.keys():
+            train_keys = self.training_datast.file_labels[train_file]
 
-        # labels[filename] = (polygons, labels)
-        self.file_labels = {}
-
-        self.states = []
-        self.previous_states = []
-
-        self.labels = []
-        self.current_polygon = None
-        self.parent_polygon = None
-        self.sibling_polygons = []
-        self.image = None
-        self.depth = None
-        self.point_pairs = None
-        self.inverse_pairs = None
-        self.cloud = None
-
-        self.redone = False
-        self.undone = False
-
-        self.dataframe = pd.DataFrame(columns=['Participant',
-                                                'Filename',
-                                                'Points',
-                                                'Distance',
-                                                'TotalDistance',
-                                                ])
-
-    def undo(self):
-        # print("UNDO")
-        if self.states:
-            self.previous_states.append(self.states[-1])
-            polygon = self.states.pop()
-            
-            print(polygon.points)
-            self.labels[polygon.index] = polygon
-            self.current_polygon = self.labels[polygon.index]
-            # self.previous_states.append(self.current_polygon)
-            # self.previous_states.append(self.current_polygon)
-            if len(self.previous_states) >= 200:
-                self.previous_states.pop(0)
-
-    def redo(self):
-        # print("REDO")
-        if self.previous_states:
-            polygon = self.previous_states.pop()
-            print(polygon.points)
-            # print(len(self.previous_states))
-            self.labels[polygon.index] = polygon
-            self.current_polygon = self.labels[polygon.index]
-            self.states.append(polygon)
-            
-            
-
-
-    def save_state(self):
-        print("Saving State")
-        self.states.append((deepcopy(self.current_polygon)) )
-
-    def create_polygon(self, filename):
-        label = LabelPolygon()
-        label.creating = True
-        
-        self.current_polygon = label
-
-        label.index = len(self.labels)
-        self.labels.append(label)
+            # iterate becasuse it is a list since there should be 2
+            for index, key in enumerate(train_keys):
+                if self.dataset.get_filename(test_polygon) == train_file:
+                    train_polygon = self.training_datast.get_polygon(key)
+                    print(train_polygon)
+                    fit = self.dataset.measure_polygon_fit(test_polygon, train_polygon)
+                    print(fit)
+                    if fit:
+                        image = train_polygon.draw(self.viewer.image, overwrite_label="Correct!", line_color=(0,255,0), thickness=2)
+                        self.viewer.update_image(image)
+                    else:
+                        image = train_polygon.draw(self.viewer.image, overwrite_label="X", line_color=(0,0,255), thickness=2)
+                        self.viewer.update_image(image)
         
 
-        #create a file dictionary to keep track of which label exists to which file
-        if filename in self.file_labels.keys():
-            print("LABELS", self.file_labels.keys())
-            # append a new label onto the filelist labels
-            temp_labels = self.file_labels[filename]
-            temp_labels.append(label.index)
-            self.file_labels[filename] = temp_labels
+
+    def test_training_line(self, upperlimit=10):
+        '''
+        Tests against training set based on a list of polygons. 
+        This tests a score based on line similarity with maximum real-world euclidean distance in m. 
+        We define a 10mm (1cm) maximum error between a set of 2 points
+        '''
+        if self.training_datast.empty():
+            print("Training dataset is empty. Load a dataset and try again.")
+            return
+        # Get current polygon
+        test_polygon = self.dataset.current_polygon
+
+        if len(test_polygon.points) < 2:
+            print("You must assign a polygon with 2 points to test first.")
+            return
+        scores = []
+        score_polygon = []
+
+        smallest_index = 0
+        # Get polygon from the same file
+        for train_file in self.training_datast.file_labels.keys():
+            train_keys = self.training_datast.file_labels[train_file]
+
+            # iterate becasuse it is a list, though it might only have one
+            for index, key in enumerate(train_keys):
+                if self.dataset.get_filename(test_polygon) == train_file:
+                    train_polygon = self.training_datast.get_polygon(key)
+
+                    # Test the difference
+                    score = self.dataset.measure_line_similarity(test_polygon, train_polygon, upperlimit)
+                    scores.append(score)
+
+                    
+
+                    if score < scores[smallest_index]:
+                        smallest_index = index
+
+                    score_polygon.append(train_polygon)
+
+
+        
+
+        print(scores)
+        
+        if scores[smallest_index] < 1:
+            image = score_polygon[smallest_index].draw(self.viewer.image, overwrite_label="Correct!", line_color=(0,255,0), thickness=2)
+            self.viewer.update_image(image)
+
+            # Record passed score
+            
+            
         else:
-            print("NEW LABEL")
-            # new label encapsulated with list so it can append additional polygons later
-            self.file_labels[filename] = [label.index] 
-            print("NEW LABEL",label.index, self.file_labels.keys() , self.file_labels[filename])
-        
-    def export_label(self, polygon, point_pairs, participant, save_filename):
-        '''
-        'Participant': Name of participant/user
-        'Filename': Filename which polygon resides
-        'Points':   Points uses to measure
-        'Distance': Distance between first and last point (Euclidean) - important if used only 2 points to measure
-        'TotalDistance': Distance between all points accumulated. - Important for measuring the distanece along the surface.                 
-        '''
-        points = polygon.points
-        try:
-            distance = utils.get_distance_2D(point_pairs, points[0], points[-1])
-        except Exception as e:
-            print(e)
-            distance = 0
+            image = score_polygon[smallest_index].draw(self.viewer.image, overwrite_label="X", line_color=(0,0,255), thickness=2)
+            self.viewer.update_image(image)
 
-        total_distance = utils.get_total_distance(point_pairs, points)/10
-        filename = self.get_filename(polygon)
-        # filename = QFileDialog.getSaveFileName(None, 'Save File', "", "CSV (*.csv)")[0]
-        # csv_path = filename.split('.')[0] + '.csv'
-        # csv_path = participant + '.csv'
-
-        
-        data = [participant, filename, points, distance, total_distance]
-
-        self.dataframe.loc[0] = data
-        try:
-            if os.path.isfile(save_filename):
-                export_csv = self.dataframe.to_csv (save_filename, index = None, header=False, mode='a')
-            else:
-                export_csv = self.dataframe.to_csv (save_filename, index = None, header=True, mode='w')
-            print("Save Complete")
-        except Exception as e:
-            print(e)
-            print("Make sure you do not have", save_filename,  "open.")
-
-    def export_all_labels(self, participant, current_folder):
-        
-        save_filename = QFileDialog.getSaveFileName(None, 'Save File', "", "CSV (*.csv)")[0]
-        for polygon in self.labels:
-            filename = self.get_filename(polygon)
-            load_file = utils.get_global_filename(current_folder, filename)
-            
-            loaded, image, depth, point_pairs,  points, colours = utils.load_projected(load_file)
-            print(loaded, point_pairs)
-            self.export_label(polygon, point_pairs, participant, save_filename)
-
-    
-    def get_filename(self, polygon):
-        filename = None
-        for key in self.file_labels.keys():
-            if self.labels.index(polygon) in self.file_labels[key]:
-                filename = key
-                break
-        return filename
-    
-    def get_filename_by_index(self, polygon_index):
-        filename = None
-        for key in self.file_labels.keys():
-            if polygon_index in self.file_labels[key]:
-                filename = key
-                break
-        return filename
-
-    def display_distance(self):
-        points = self.current_polygon.points[-2:]
-        dist = utils.get_distance(self.point_pairs, points[0], points[1])
-        # print(dist)
-
-    def get_polygon(self, index):
-        return self.labels[index]
-    
-    def delete_polygon(self, index, next_index):
-        # self.save_state()
-        print(next_index)
-        #removes index from filelist
-        for filename in self.file_labels.keys():
-            indices = self.file_labels[filename]
-
-
-
-
-            if index in indices:
-                new_indices = self.file_labels[filename]
-                new_indices.remove(index)
-                print("New indices", new_indices)
-                self.file_labels[filename] = new_indices
-                # print(self.file_labels[filename])
-
-                # For every index greater than the removed index, reduce index by 1 if we remove an index
-                # we use new indices or else we reach a segmentation fault
-                for i in new_indices:
-                    if i > index:
-                        # Item no longer coorelates to index, so we find the item's index
-                        item_index = self.file_labels[filename].index(i)
-                        self.file_labels[filename][item_index] = self.file_labels[filename][item_index] -1
-            
-
-        
-        if next_index == -1:
-            self.current_polygon = None
-        else:
-            self.current_polygon = self.labels[next_index]
-        self.labels.pop(index)
-
-        # if we deleted all items from filename, delete the key
-        if self.file_labels[filename] == []:
-            self.file_labels.pop(filename)
-
-        
-        
-        # self.current_polygon = index-1
-
-    def load_ply(self, filename, progressbar=None):
-        loaded, self.image, self.depth, self.point_pairs,  points, colours = utils.load_projected(filename, progressbar)
-        if not loaded:
-            print("Did not load projected...")
-            plydata = PlyData.read(filename)
-            print("Calculating Projection...")
-            self.image, self.depth, self.point_pairs = utils.project_2D(utils.KINECT_AZURE_INTRINSICS, plydata, progress=progressbar)
-            self.cloud, points, colours = utils.map_pairs_2D(self.image, self.point_pairs)
-
-            utils.save_projected(filename, self.image, self.depth, self.point_pairs, points, colours)
-
-        else:
-            print("Projection loaded...")
-            # progressbar.setFormat("Converting Pointcloud...")
-            # progressbar.setValue(60)
-            self.cloud = utils.numpy_to_o3d(np_cloud_points=points, np_cloud_colors=colours, swap_RGB=True)
-            # progressbar.setValue(100)
-            # progressbar.setFormat("Done...")
-            
-
-
-
-
-'''
-######################################################################
-CLASS LABELPOLYGON
-
-
-######################################################################
-'''
-class LabelPolygon():
-    def __init__(self):
-        random.seed(datetime.now())
-        self.mean = (0,0)
-        self.polygon_label = None
-        self.filename = None
-        self.points = []
-        self.view = True
-        self.index = None
-        self.color = (random.randint(0, 255),random.randint(0, 255),random.randint(0, 255),0.5) #RGBA
-
-        self.queue_save = False
-
-        # flag to see if polygon is being created
-        self.creating = True
-
-    def set_label(self, label):
-        self.polygon_label = str(label)
-
-    def calculate_mean(self):
-        '''
-        Calculates the mean of all the points
-        '''
-        mean_x = 0
-        mean_y = 0
-
-        for point in self.points:
-            mean_x += point[0]
-            mean_y += point[1]
-
-        self.mean = (mean_x/len(self.points), mean_y/len(self.points))
-
-    # def calculate_median(self):
-    #     '''
-    #     Calculates the mean of all the points
-    #     '''
-    #     mean_x = 0
-    #     mean_y = 0
-
-    #     for point in self.points:
-    #         mean_x += point[0]
-    #         mean_y += point[1]
-
-    #     self.mean = (mean_x/len(self.points), mean_y/len(self.points))
-
-    
-    def assign_point(self, location):
-        """
-        Creates a point in the polygon
-        """
-        # self.queue_save = True
-        self.points.append(location)
-        self.calculate_mean()
-
-    # def get_points(self, point_idx):
-    #     '''
-    #     '''
-
-    def start_poly(self):
-        """
-        Starts a new polygon (May not use?)
-        """
-        self.queue_save = True
-        self.creating = True
-
-    def end_poly(self):
-        """
-        Ends the polygon closing it upself.polygo
-        """
-        self.queue_save = True
-        self.creating = False
-
-    def draw(self, image, infill=(0,0,255,0.5), show_label=True, show_points = True, show_lines = True):
-        """
-        Draws the polygon with points and edges with an infill
-        """
-        overlay = image.copy()
-        overlay = np.nan_to_num(overlay).astype(np.uint8)
-        # print(overlay)
-        output = image.copy()
-        output = np.nan_to_num(overlay).astype(np.uint8)
-
-        if show_points:
-            for point in self.points:
-                # image = cv2.circle(overlay, point, 1, (0,10,255),5)
-                # image = cv2.circle(overlay, point, 4, (0,0,0), 2)
-                image = cv2.circle(output, point, 1, (0,150,255), 1)
-
-        # Draw Lines (Yellow)
-        
-        if len(self.points) >= 2:
-            pts = np.array(self.points, np.int32) 
-            pts = pts.reshape((-1, 1, 2)) 
-
-            if not self.creating:
-                image = cv2.fillPoly(overlay, [pts], self.color)
-
-            if show_lines:
-                image = cv2.polylines(overlay,[pts], (not self.creating), (0,255,255),1 )
-            
-            if show_label:
-                font_color = (255, 245, 85)
-                if self.polygon_label:
-                    cv2.putText(output, text=self.polygon_label, org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
-                else:
-                    cv2.putText(output, text="No Label", org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
-
-            
-        cv2.addWeighted(overlay, 0.3, output, 1 - 0.3,
-		0, output)
-
-        return output
-    
-    # def draw_qt()
-
-    def edit_point(self, point_start, point_stop):
-        """
-        Moves a point when clicked and remains clicked
-        """
-        for i, point in enumerate(self.points):
-            if point == point_start:
-                self.points[i] = point_stop
-                print("Replaced", point, " to ", point_stop)
-        # pass
-
-    def remove_point(self, point):
-        """
-        Removes a point from the polygon
-        """
-        self.queue_save = True
-        for i, test_point in enumerate(self.points):
-            if point == test_point:
-                self.points.pop(i)
                 
 
-        
 
-        
-
-    def get_point(self, clicked_location):
-        """
-        Returns point if clicked
-        """
-        pass
-    
-    def get_adjacent(self, point):
-        """
-        Returns the two adjacent points, if a point is unavailable, that part of the tuple returns None
-
-            Returns (Previous, Next)
-            if Previous is none: Returns (None, Next)
-            if Next is none: Returns (Previous, None)
-            if No adjacent points: Returns (None, None)
-        """
-        adjacent = (None, None)
-        point_index = self.points.index(point)
-        #if not beginning or end, has 2 adjacent points
-        if len(self.points) > point_index + 1 and point_index >= 1:
-            adjacent = (self.points[point_index-1], self.points[point_index+1])
-        # Point is at the end, so grab prior point
-        elif len(self.points) == point_index + 1:
-            adjacent = (self.points[point_index-1], None)
-        elif point_index == 0:
-            adjacent = (None, self.points[point_index+1])
-
-        return adjacent
-
-    def check_near_point(self, location, dist=10):
-        for point in self.points:
-            if (location[0]-point[0])**2 + (location[1]-point[1])**2 <= dist**2:
-                return point
-        return None
-
-    def check_in_polygon(self, location):
-        pass
-    
-    def create_mask(self, width, height):
-        pts = np.array(self.points, np.int32) 
-        pts = pts.reshape((-1, 1, 2)) 
-        black_image = np.zeros((width, height), np.uint8)
-        mask = cv2.fillPoly(black_image, [pts], (255,255,255)) 
-        # cv2.imshow("Mask", mask)
-        return mask
-                # image = cv2.circle(image, point, 1, (0,255,0),7)
-
-    def get_segment_crop(self, image, point_pairs):
-        
-        # print(image)
-        # print(point_pairs)
-
-        pts = np.array(self.points)
-
-        ## (1) Crop the bounding rect
-        rect = cv2.boundingRect(pts)
-        x,y,w,h = rect
-        image = np.nan_to_num(image).astype(np.uint8)
-        croped = image[y:y+h, x:x+w].copy()
-
-        ## (2) make mask
-        pts = pts - pts.min(axis=0)
-
-        mask = np.zeros(croped.shape[:2], np.uint8)
-        # full_mask = np.zeros(image.shape[:2], np.uint8)
-        full_mask = self.create_mask(image.shape[0], image.shape[1])
-
-        cv2.drawContours(mask, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
-        # cv2.drawContours(full_mask, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
-
-        indices = np.where(mask == [255])
-        coordinates = zip(indices[0], indices[1])
-        # for coord in coordinates:
-        #     print(coord[0], coord[1])
-        # cv2.imshow("MASK!", full_mask)
-
-        ## (3) do bit-op
-        dst = cv2.bitwise_and(croped, croped, mask=mask)
-        full_dst = cv2.bitwise_and(image, image, mask=full_mask)
-
-        ## (4) add the white background
-        bg = np.ones_like(croped, np.uint8)*255
-
-        full_bg = np.ones_like(image, np.uint8)*255
-        full_bg_invalid = np.ones_like(image, np.uint8)*-1
-        # print(full_bg_invalid)
-        # cv2.imshow("fullBG", full_bg)
-        
-        cv2.bitwise_not(bg,bg, mask=mask)
-        cv2.bitwise_not(full_bg,full_bg, mask=full_mask)
-        cv2.bitwise_not(full_bg_invalid,full_bg_invalid,full_mask)
-        
-        # full_bg_invalid[full_bg_invalid >= 255] = -1
-        # full_bg_invalid = full_bg_invalid.astype(np.int16) * -1
-        # print(full_bg_invalid)
-        dst2 = bg + dst
-        full_dst2 = full_bg + full_dst 
-        full_invalid_dst2 = full_bg_invalid + full_dst
-
-        cloud, points, colour = utils.map_pairs_2D(full_invalid_dst2, point_pairs)
-        # utils.display_cloud(cloud)
-        utils.edit_cloud(cloud)
-        
-
-        # np.nan_to_num(full_dst2).astype(np.uint8)
-        # cv2.imshow("FullDst", full_dst2)
-        # cv2.imshow("Cropped Image", dst2)
-        
-        # cv2.waitKey(0)
-        return dst2, coordinates, cloud
 
 
 '''
@@ -1169,6 +981,7 @@ class PhotoViewer(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         # self.update_visualizer()
+
 
     def dataset(self):
         return self.parent.dataset
@@ -1317,11 +1130,13 @@ class PhotoViewer(QGraphicsView):
 
         if self.dataset().current_polygon is not None:
             
+            # If we have a polygon, save the new state 
             if self.dataset().current_polygon.queue_save is True:
                 self.parent.dataset.save_state()
                 self.dataset().current_polygon.queue_save = False
 
 
+            # Assign point
             if event.button() == Qt.LeftButton and not self.edit_mode:
                 print("Left Button Clicked")
                 self.dataset().save_state()
@@ -1332,6 +1147,7 @@ class PhotoViewer(QGraphicsView):
                 self.update_image(image)
                 self.update_distance(mapped_point)
                 
+                print(self.parent.o3d_vis)
                 if self.parent.o3d_vis is not None:
                     print("Visualizer", self.parent.o3d_vis)
                     print("Updating visualizer")
@@ -1344,28 +1160,33 @@ class PhotoViewer(QGraphicsView):
                     # self.parent.o3d_vis.poll_events()
                     # self.parent.o3d_vis.update_renderer()
                     
-
+            
 
             if event.button() == Qt.RightButton:
-                print("Right button clicked")
-                self.redraw_image()
-                self.dataset().save_state()
-                point = self.dataset().current_polygon.check_near_point(mapped_point, dist=2)
-                self.dataset().current_polygon.remove_point(point)
-                self.selected_point = None
+
+                # Save line and test against training set
+                # print("Right button clicked")
+                # self.redraw_image()
+                # self.dataset().save_state()
+                # point = self.dataset().current_polygon.check_near_point(mapped_point, dist=2)
+                # self.dataset().current_polygon.remove_point(point)
+                # self.selected_point = None
                 
-                image = self.dataset().current_polygon.draw(self.image)
-                self.update_image(image)
+                # image = self.dataset().current_polygon.draw(self.image)
+                # self.update_image(image)
+                
 
-                '''
+
+                # '''
                 #NOTE this comment block cuts segment and displays it in 3D
-                self.current_polygon.end_poly()
+                self.dataset().current_polygon.end_poly()
                 self.redraw_image()
-                image = self.current_polygon.draw(self.image)
-                mask = self.current_polygon.create_mask(self.image.shape[0], self.image.shape[1])
+                image = self.dataset().current_polygon.draw(self.image)
+                mask = self.dataset().current_polygon.create_mask(self.image.shape[0], self.image.shape[1])
+                self.dataset().save_state()
 
-                cropped , coordinates, cloud = self.current_polygon.get_segment_crop(self.original_img, self.parent.dataset.point_pairs)
-                '''
+                # cropped , coordinates, cloud = self.current_polygon.get_segment_crop(self.original_img, self.parent.dataset.point_pairs)
+                # '''
                 # self.update_image(image)
             
             #Edit mode select point
@@ -1455,7 +1276,14 @@ class PhotoViewer(QGraphicsView):
             image = self.draw_polygons(self.image)
             self.update_image(image)
             self.selected_point = None
-            
+
+        labels = self.dataset().labels
+        for polygon1 in labels:
+            for polygon2 in labels:
+                if polygon1 != polygon2:
+                    score = self.dataset().measure_line_similarity(polygon1, polygon2, upper_limit=20)
+                    # print(polygon1.polygon_label, polygon2.polygon_label, score)
+                
 
     def update_o3d_viewer(self):
         if self.parent.o3d_vis is not None:
@@ -1475,12 +1303,6 @@ class PhotoViewer(QGraphicsView):
                 utils.o3d_add_object(self.parent.o3d_vis, [pointer_box])
 
 
-
-
-
-
-
-
     @QtCore.pyqtSlot()
     def mouseMoveEvent(self, event):
 
@@ -1495,11 +1317,13 @@ class PhotoViewer(QGraphicsView):
 
         if self.parent.o3d_vis is not None:
             self.update_o3d_viewer()
-        try:
+        # try:
+        if self.parent.worker is not None:
             if self.parent.worker.continue_run is False:
-                self.parent.o3d.destroy_window()
-        except:
-            pass
+                if self.parent.o3d_vis is not None:
+                    self.parent.o3d_vis.destroy_window()
+        # except:
+            # pass
 
         try:
             image = np.nan_to_num(self.original_img).astype(np.uint8)
@@ -1517,8 +1341,10 @@ class PhotoViewer(QGraphicsView):
             image = self.draw_polygons(image)
             # image = cv2.circle(self.image, self.hover_point, 1, (0,255,255), 1)
             self.update_image(image)
-        except Exception as e:
+        except IndexError as e:
             print(e)
+        except:
+            # print(e)
             print("Could not grab mapped point.")
 
         if event.buttons() == QtCore.Qt.NoButton:
