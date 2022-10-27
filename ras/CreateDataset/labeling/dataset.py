@@ -59,7 +59,15 @@ class Dataset():
 
     # Calls a function to test the number of labels
     def empty(self): 
-        return len(self.labels) <= 0
+
+        # return not empty if at least one label has a point
+        for label in self.labels:
+            if label.points:
+                return False
+        
+        # Returns empty if there exist no labels or no labels with points
+        return True
+
 
     def undo(self):
         # print("UNDO")
@@ -145,7 +153,7 @@ class Dataset():
         if already_loaded:
             point_pairs = self.point_pairs
         else:
-            loaded, image, depth, point_pairs,  points, colours = utils.load_projected(load_file)
+            loaded, image, depth, point_pairs,  other_points, colours = utils.load_projected(load_file)
 
 
         try:

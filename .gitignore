@@ -133,3 +133,4 @@ env37
 *.ply
 *.jpeg
 *.jpg
+*.projected

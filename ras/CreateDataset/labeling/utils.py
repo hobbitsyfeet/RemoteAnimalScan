@@ -536,9 +536,14 @@ def get_total_distance(point_pairs, points):
             #pixel coordinates
             p1 = points[index]
             p2 = points[index+1]
-            # pixels mapped to depth coordinates (if they are valid)
-            if p1 in point_pairs.keys() and p2 in point_pairs.keys():
-                total_distance += get_distance_2D(point_pairs, p1, p2)
+            try:
+                # pixels mapped to depth coordinates (if they are valid)
+                if p1 in point_pairs.keys() and p2 in point_pairs.keys():
+                    total_distance += get_distance_2D(point_pairs, p1, p2)
+            except Exception as e:
+                print(e)
+                print("Could not grab point pairs")
+                return 0
     return total_distance
 
 

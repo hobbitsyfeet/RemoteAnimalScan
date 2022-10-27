@@ -12,13 +12,14 @@
 
 from datetime import datetime
 from fileinput import filename
+from imp import reload
 
 # import open3d
 import cv2
 import sys
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QAbstractItemView, QApplication, QAction, QCheckBox,
-                             QComboBox, QDockWidget, QDoubleSpinBox,
+                             QComboBox, QDockWidget, QDoubleSpinBox, QMessageBox,
                              QFileDialog, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QListWidget, QListWidgetItem,
                              QPushButton, QSpinBox, QStackedLayout, QStyle,
@@ -67,6 +68,7 @@ LABEL_LINE = 1
 LABEL_RECTANGLE = 2
 LABEL_ELIPSE = 3
 
+LOAD_ORDER_SEED = random.seed("DUCKS")
 
 #class App(QWidget):
 class App(QMainWindow):
@@ -105,6 +107,12 @@ class App(QMainWindow):
         self.training_datast = Dataset()
         self.testing_dataset = Dataset()
 
+        self.scores = LabelScore()
+        self.test_set = self.training_datast
+
+        self.load_order = None
+        self.load_order_index = 0
+
         self.label_layouts = []
 
         self.o3d_vis = None
@@ -124,13 +132,15 @@ class App(QMainWindow):
         try:
             # path = os.path.abspath("./data/")
             # print(os.getcwd())
-            path = os.path.expanduser(os.getcwd()) + "/data/"
+            path = os.path.expanduser(os.getcwd()) + "/data/Training/"
             print(path)
             self.get_folder(path)
+            
         except Exception as e:
             print(e)
             print("Could not load data folder, find it by yourself.")
         
+        self.load_random(True)
         
         # self.file_list_widget.setSelectionMode(
         #     QAbstractItemView.ExtendedSelection
@@ -274,7 +284,8 @@ class App(QMainWindow):
         self.body_horizontal.addLayout(self.right_body)
         # fileListLayout = QVBoxLayout()
         self.file_list_widget = QListWidget()
-        self.file_list_widget.itemDoubleClicked.connect(self.open_selected_file)
+        self.file_list_widget.setEnabled(False) # Disables the manual selection of files
+        self.file_list_widget.itemDoubleClicked.connect(lambda: self.open_selected_file(False))
         self.dock.setWidget(self.file_list_widget)
 
 
@@ -366,7 +377,7 @@ class App(QMainWindow):
         # Show selected stack layout from selected label
         self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget().setHidden(False)
 
-        print("INDEX:", index)
+        # print("INDEX:", index)
         # self.current_polygon = self.dataset.labels[index]
         self.dataset.current_polygon = self.dataset.labels[index]
         # self.viewer.current_polygon = self.current_polygon
@@ -382,7 +393,7 @@ class App(QMainWindow):
 
         self.label_stack_layout.addWidget(holder_widget)
         count = self.label_stack_layout.count() -1
-        print("COUNT", count)
+        # print("COUNT", count)
         self.label_stack_layout.setCurrentIndex(count)
         # self.label_stack_layout.setCurrentIndex(count)
 
@@ -407,8 +418,11 @@ class App(QMainWindow):
         delete.clicked.connect(lambda: self.delete_pressed())
         preview = QPushButton("Preview")
 
-        test = QPushButton("Test")
-        test.clicked.connect(lambda: self.test_training_poly())
+        # test = QPushButton("Test")
+        # test.clicked.connect(lambda: self.test_poly(self.test_set))
+
+        next = QPushButton("Next")
+        next.clicked.connect(lambda: self.next_pressed())
 
         label_info_layout.addWidget(label_name)
         label_info_layout.addWidget(label_id)
@@ -418,12 +432,13 @@ class App(QMainWindow):
         label_info_layout.addWidget(parent_label)
         label_info_layout.addWidget(delete)
         label_info_layout.addWidget(preview)
-        label_info_layout.addWidget(test)
+        # label_info_layout.addWidget(test)
+        label_info_layout.addWidget(next)
 
         item = QListWidgetItem()
         item.setText(("Label_" + str(count)))
         # item.setCheckState(2)
-        print(count)
+        # print(count)
     
 
         self.label_list_widget.addItem(item)
@@ -436,6 +451,17 @@ class App(QMainWindow):
         label_name.textChanged.connect(lambda: self.handle_label_name_change(label_name, count))
         visible.clicked.connect(lambda: self.change_visible(count, item.checkState(), visible))
         preview.clicked.connect(lambda: self.show_labels_3D())
+
+    def next_pressed(self):
+        # Test the polygon 
+        self.test_poly(self.test_set)
+
+        # This is to pause to show result before moving on
+        msg = QMessageBox()
+        msg.setWindowTitle("Results")
+        msg.setText("Press OK to continue.")
+        x = msg.exec_()  # this will show our messagebox
+        self.load_random()
 
     def get_current_info_widgets(self, item_at):
         # layout = self.label_stack_layout.children()[0].children()[0].children()
@@ -593,9 +619,6 @@ class App(QMainWindow):
 
         file.addAction(autosave)
 
-
-
-
         edit = bar.addMenu("Edit")
 
         edit_undo = QAction("Undo", self)
@@ -663,6 +686,13 @@ class App(QMainWindow):
 
         help.addAction(wiki)
 
+
+        dev = bar.addMenu("Developer")
+        access_file_list = QAction("Access File List", self, checkable=True)
+        access_file_list.setChecked(False)
+        access_file_list.triggered.connect(lambda: self.file_list_widget.setEnabled(access_file_list.isChecked()))
+
+        dev.addAction(access_file_list)
 
     def undo(self):  
         self.dataset.undo()
@@ -737,7 +767,7 @@ class App(QMainWindow):
     def toggle_edit(self):
         self.edit_mode = not self.edit_mode
 
-    def open_selected_file(self):
+    def open_selected_file(self, already_selected = False):
         '''
         The main function which loads selected_file into the active screen to label.
         '''
@@ -748,9 +778,11 @@ class App(QMainWindow):
         if self.autosave and not self.dataset.empty():
             self.dataset.export_all_labels(self.user, self.current_folder, use_previous_path=True)
         
-        self.selected_file = self.file_list_widget.selectedItems()[0].text()
+        if already_selected is False:
+
+            self.selected_file = self.file_list_widget.selectedItems()[0].text()
         # self.dataset.current_file = self.selected_file
-        print(self.selected_file[0])
+        print(self.selected_file)
         extention = self.selected_file.split('.')[-1]
 
         if extention == "ply" or extention == "projected":
@@ -827,25 +859,41 @@ class App(QMainWindow):
         self.file_list_widget.addItems(self.file_list)
         self.file_list_widget.repaint()
         self.file_list_widget.show()
-        
-        
+
+        # self.load_random(True)
         
         print("Loaded",  self.file_list)
 
-    def load_random(self):
+    def load_random(self, reload_order=True):
         '''
         Load random will take a random file in the testing set and load it for the user.
-        '''
-        file_list = self.file_list_widget.items()
-        index = random.randrange(0, len(file_list))
-        self.selected_file = file_list[index]
-        self.open_selected_file()
 
-    def test_training_poly(self):
+        Reload order will resample the file list in the folder, randomize it and 
+        start on the first of the list
+        '''
+        # file_list = self.file_list_widget.items()
+        # self.file_list
+        print("RANDOM LOAD FILE LIST", self.file_list)
+        if self.load_order is None or reload_order:
+            self.load_order = random.sample(self.file_list, k=len(self.file_list))
+            self.load_order_index = 0
+
+        # Select the file before we go to the next random image
+        self.selected_file = self.load_order[self.load_order_index]
+        print("SELECCTED FILE", self.selected_file)
+        self.open_selected_file(already_selected=True)
+
+        # Increment load order index and modulo the number within the range. 
+        # This makes the list repeat itself when next is above the range
+        self.load_order_index += 1
+        self.load_order_index = self.load_order_index % len(self.load_order)
+
+
+    def test_poly(self, dataset, Training=True):
         '''
         Tests if both points fall within a testing polygon
         '''
-        if self.training_datast.empty():
+        if dataset.empty():
             print("Training dataset is empty. Load a dataset and try again.")
             return
         # Get current polygon
@@ -854,28 +902,54 @@ class App(QMainWindow):
         if len(test_polygon.points) < 2:
             print("You must assign a polygon with 2 points to test first.")
             return
-        both_test = False
 
+        fit_count = 0
+        passed = False
+        both_test = False
         smallest_index = 0
         # Get polygon from the same file
-        for train_file in self.training_datast.file_labels.keys():
-            train_keys = self.training_datast.file_labels[train_file]
+        for train_file in dataset.file_labels.keys():
+            train_keys = dataset.file_labels[train_file]
 
             # iterate becasuse it is a list since there should be 2
             for index, key in enumerate(train_keys):
                 if self.dataset.get_filename(test_polygon) == train_file:
-                    train_polygon = self.training_datast.get_polygon(key)
+                    train_polygon = dataset.get_polygon(key)
                     print(train_polygon)
                     fit = self.dataset.measure_polygon_fit(test_polygon, train_polygon)
                     print(fit)
                     if fit:
+                        fit_count += 1
                         image = train_polygon.draw(self.viewer.image, overwrite_label="Correct!", line_color=(0,255,0), thickness=2)
                         self.viewer.update_image(image)
                     else:
                         image = train_polygon.draw(self.viewer.image, overwrite_label="X", line_color=(0,0,255), thickness=2)
                         self.viewer.update_image(image)
-        
 
+        if fit_count == 2:
+            passed = True
+
+        self.scores.add_polyscore(train_file, test_polygon, passed=passed, Training=Training)
+
+        return fit_count
+
+    def testing_phase_check(self):
+        if self.scores.training_phase and self.scores.passed_training():
+            # Exit training phase (go to testing phase)
+            self.scores.training_phase = False
+
+            # Load testing folder and 
+            testing_folder = os.path.expanduser(os.getcwd()) + "/data/Testing/"
+            self.get_folder(testing_folder)
+            self.load_random(reload_order=True)
+
+        # If in the testing phase and file limit has been reached, you're done
+        if self.scores.training_phase == False and self.scores.number_tested == self.scores.testing_file_number:
+            # This is to pause to show result before moving on
+                msg = QMessageBox()
+                msg.setWindowTitle("Results")
+                msg.setText("You have completed the testing set. Please submit the results.")
+                x = msg.exec_()  # this will show our messagebox
 
     def test_training_line(self, upperlimit=10):
         '''
@@ -1278,10 +1352,10 @@ class PhotoViewer(QGraphicsView):
             self.selected_point = None
 
         labels = self.dataset().labels
-        for polygon1 in labels:
-            for polygon2 in labels:
-                if polygon1 != polygon2:
-                    score = self.dataset().measure_line_similarity(polygon1, polygon2, upper_limit=20)
+        # for polygon1 in labels:
+        #     for polygon2 in labels:
+        #         if polygon1 != polygon2:
+        #             score = self.dataset().measure_line_similarity(polygon1, polygon2, upper_limit=20)
                     # print(polygon1.polygon_label, polygon2.polygon_label, score)
                 
 
@@ -1419,7 +1493,7 @@ class PhotoViewer(QGraphicsView):
         # print("updating distance")
         if self.dataset().current_polygon is not None:
             if len(self.dataset().current_polygon.points) >= 1:
-
+                
                 total_distance = utils.get_total_distance(self.dataset().point_pairs, self.dataset().current_polygon.points)
                 # print(total_distance)
                 self.parent.get_current_info_widgets(3).setText(("Total Distance: " + str(total_distance/10) + "cm"))       
