@@ -2,7 +2,7 @@ import os
 import sys
 
 import open3d as o3d
-from PyQt5.QtCore import QSize
+from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QIcon, QIntValidator, QPixmap
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
                              QComboBox, QDockWidget, QDoubleSpinBox,
@@ -13,6 +13,10 @@ from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
 
 import preprocessing as prep
 from sklearn.model_selection import train_test_split
+from labeling import utils
+from labeling import polygon
+
+import numpy as np
 
 class App(QWidget):
 
@@ -207,7 +211,11 @@ class App(QWidget):
         print(pcd_path)
         pointclouds = []
         for path in pcd_path:
-            pcd = o3d.io.read_point_cloud(path.data(1),format="ply",print_progress=True)
+            if path[:-4] == "json":
+                pcd = utils.load_json_pointcloud(pcd)
+                pcd = utils.json_dict_to_o3d(pcd)
+            else:
+                pcd = o3d.io.read_point_cloud(path.data(1),format="ply",print_progress=True)
             pointclouds.append(pcd)
         o3d.visualization.draw_geometries(pointclouds)
 
@@ -242,8 +250,6 @@ class App(QWidget):
                     item.setHidden(True)
                 else:
                     item.setHidden(False)
-            
-
 
 class Exporter(QWidget):
     """
@@ -269,7 +275,9 @@ class Exporter(QWidget):
         layout.addLayout(body)
 
         self.normals = QCheckBox("Normals")
+        self.normals.setChecked(True)
         self.colours = QCheckBox("Colours")
+        self.colours.setChecked(True)
 
         feature_layout.addWidget(self.normals)
         feature_layout.addWidget(self.colours)
@@ -381,7 +389,8 @@ class Exporter(QWidget):
             pass
         return file_name[0]
 
-    def export(self, file_list):
+
+    def export(self, file_list, type="json"):
         
         if not self.get_items(self.labels_list):
             print("You need to add labels...")
@@ -391,11 +400,14 @@ class Exporter(QWidget):
         save_file = self.save_file()
         # Check which features should be loaded
         features = []
+        
         if self.colours.isChecked():
             features.append(prep.COLOR)
         if self.normals.isChecked():
             features.append(prep.NORMAL)
-        
+        print(features)
+        print(self.colours.isChecked())
+        print(self.normals.isChecked())
         norm_method = self.scale.currentText()
         if norm_method == "MinMax":
             norm_method = prep.MINMAX
@@ -413,65 +425,76 @@ class Exporter(QWidget):
             down_method = prep.VOXEL_SAMPLE
             down_value = self.voxel_size.value()
 
+        print("DOWN VALUE", down_value)
+
         #Load all the Pointclouds from file list
         # cloud_list = prep.load_dataset(file_list)
         
         label_list = prep.get_labels(file_list, self.get_items(self.labels_list))
 
-        # print(self.get_items(self.labels_list))
+
         print("File Labels:", label_list)
-        cloud_list, cloud_labels = prep.combine_ply_from_folder(file_list, self.get_items(self.labels_list))
-        print(cloud_list)
-        # print(cloud_labels)
-        point_num_list = []
-        #Prepare data in dataset
-        for index, cloud in enumerate(cloud_list):
 
-            #Normalize
-            print("Normalizing...")
-            cloud = prep.normalize(cloud, norm_method)
-            print('\r')
-            #Downsample
-            print("Downsampling...")
-            # print(cloud_labels[index])
-            cloud, labels = prep.downsample(cloud, cloud_labels[index], down_method, down_value)
-            print('\r')
-            # print(cloud)
-            # print(labels)
-            #Grab Features (Normals)
-            print("Estimating Normals...")
-            cloud = prep.estimate_normals(cloud)
-            print('\r')
-            #?Normalize Colour?
-            
-            #a list describing how many points exist in each pointcloud
-            print("Counting Points...")
-            point_num_list.append(prep.get_num_points(cloud))
-            print('\r')
-            #Assign cloud to cloud_list, updating changes
-            cloud_list[index] = cloud
-            cloud_labels[index] = labels
+        if type == "combine_ply":
+            #Combine pointclouds from the same folder into one whole pointcloud with labels
+            cloud_list, cloud_labels = prep.combine_ply_from_folder(file_list, self.get_items(self.labels_list))
 
-        if len(cloud_list) < 2:
-            print("This dataset needs more than 2 pointclouds...")
-            return
-
-        # #Get the maximum number of points in the dataset
-        max_points = prep.get_max_points(cloud_list)
-        print("Max Dataset Points: ", max_points)
-
-        #TestTrain Split
-        point_list = []
-        color_list = []
-        normal_list = []
         
+            #Prepare data in dataset
+            point_num_list = []
+            for index, cloud in enumerate(cloud_list):
 
-        for cloud in cloud_list:
-            np_cloud_points, np_cloud_colors, np_cloud_normals = prep.o3d_to_numpy(cloud)
-            point_list.append(np_cloud_points)
-            color_list.append(np_cloud_colors)
-            normal_list.append(np_cloud_normals)
+                #Normalize
+                print(cloud.colors)
+                print("Normalizing...")
+                cloud = prep.normalize(cloud, norm_method)
+                print('\r')
+                #Downsample
+                print("Downsampling...")
+                # print(cloud_labels[index])
+                cloud, labels = prep.downsample(cloud, cloud_labels[index], down_method, down_value, features=features)
+                print('\r')
+                # print(cloud)
+                # print(labels)
+                #Grab Features (Normals)
+                print("Estimating Normals...")
+                cloud = prep.estimate_normals(cloud)
+                print('\r')
+                #?Normalize Colour?
+                
+                #a list describing how many points exist in each pointcloud
+                print("Counting Points...")
+                point_num_list.append(prep.get_num_points(cloud))
+                print('\r')
+                #Assign cloud to cloud_list, updating changes
+                cloud_list[index] = cloud
+                cloud_labels[index] = labels
+
+            if len(cloud_list) < 2:
+                print("This dataset needs more than 2 pointclouds...")
+                return
+
+            # #Get the maximum number of points in the dataset
+            max_points = prep.get_max_points(cloud_list)
+            print("Max Dataset Points: ", max_points)
+
+            #TestTrain Split
+            point_list = []
+            color_list = []
+            normal_list = []
             
+
+            for cloud in cloud_list:
+                
+                np_cloud_points, np_cloud_colors, np_cloud_normals = prep.o3d_to_numpy(cloud)
+                print(np_cloud_points)
+                point_list.append(np_cloud_points)
+                color_list.append(np_cloud_colors)
+                normal_list.append(np_cloud_normals)
+
+        elif type == "json":
+            self.json_preprocess(file_list)
+
         # print(cloud_labels)
         test_points, train_points, test_colors, train_colors, test_normals, train_normals, test_labels, train_labels, point_num_test, point_num_train  = train_test_split(point_list, color_list, normal_list, cloud_labels, point_num_list, test_size=0.33, random_state=42)
         # test_colors, train_colors = train_test_split(np_cloud_colors,test_size=0.33, random_state=42)
@@ -480,14 +503,55 @@ class Exporter(QWidget):
         # test_clouds, train_clouds, test_labels, train_labels, point_num_test, point_num_train = train_test_split(cloud_list, label_list, point_num_list, test_size=0.33, random_state=42)
         
         # #Export
-        prep.export_hdf5(save_file, cloud_list, cloud_labels, point_num_list, max_points)
+        prep.export_hdf5(save_file, cloud_list, cloud_labels, point_num_list, max_points, features=features)
 
+    # def json_preprocess(self, file_list, sample_seed=42):
+    #     """
+    #     loads a list of json files and preprocesses the data.
+
+    #     Samples each file (random sample) and does not remove data labelled as keypoints
+    #     """
+    #     sample_size = self.points.value()
+
+    #     pointclouds = []
+
+    #     for file in file_list:
+    #         pointcloud = utils.load_json_pointcloud(file)
+
+    #         # get total point size
+    #         point_count = len(pointcloud['points'])
+
+    #         # separate keypoints and segmentation for labelling
+    #         types = pointcloud['label_types']
+    #         keypoint_indices = utils.data_indices(types, polygon.TYPE_POINT)
+    #         non_keypoint_indices = utils.invert_indices(keypoint_indices)
+
+    #         print(non_keypoint_indices)
+            
+    #         # We do not want to sample keypoint indices so to keep sample sample size the same as value passed in we only sample non-keypoints and add keypoints back in
+    #         segment_sample_size = sample_size - len(keypoint_indices)
+
+    #         non_keypoint_sampled_indices = utils.random_sample_indices(segment_sample_size, seed=sample_seed)
+
+    #         sampled_indices = np.vstack((non_keypoint_sampled_indices, keypoint_indices))
+
+    #         # Create a dictionary representitive of the dictionary that is loaded.   
+    #         sampled_dict = utils.select_dict_indices(pointcloud, sampled_indices)
+    #         pointcloud.append(sampled_dict)
+
+    #     return sampled_dict
+    #         # prep.export_hdf5()
+
+
+            
+
+
+            
 
 def main():
     app = QApplication(sys.argv)
     example = App()
     sys.exit(app.exec_())
-
 
 if __name__ == '__main__':
     main()

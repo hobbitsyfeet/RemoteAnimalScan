@@ -5,6 +5,8 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler, MaxAbsScaler
 import os
 import h5py
 import random
+from labeling import polygon, utils
+
 
 def o3d_to_numpy(o3d_cloud):
     """
@@ -20,9 +22,10 @@ def numpy_to_o3d(np_cloud_points, np_cloud_colors=None, np_cloud_normals=None):
     #create o3d pointcloud and assign it
     o3d_cloud = o3d.geometry.PointCloud()
     o3d_cloud.points = o3d.utility.Vector3dVector(np_cloud_points)
-    if np_cloud_colors is not None:
+
+    if o3d_cloud.has_colors():
         o3d_cloud.colors = o3d.utility.Vector3dVector(np_cloud_colors)
-    if np_cloud_normals is not None:
+    if o3d_cloud.has_normals():
         o3d_cloud.normals = o3d.utility.Vector3dVector(np_cloud_normals)
     # o3d.visualization.draw_geometries([downpcd])
     return o3d_cloud
@@ -180,7 +183,7 @@ def combine_ply_from_folder(file_list, labels):
 
                 # Grab labels from the group like (0,"Head") from Head.ply
                 group_labels = get_labels([cloud], labels) 
-                # print(group_labels)
+                print(group_labels)
                 # as labels exist one-per-file, we extend the label to match points.
                 merged_labels.extend([group_labels[0][0]]*get_num_points(pcd_cloud)) 
 
@@ -190,9 +193,9 @@ def combine_ply_from_folder(file_list, labels):
 
     print(label_list)
     return cloud_list, label_list
-    
-            
-def downsample_random(cloud, labels, num_points=500, print_down_labels = False, seed=None, features=[]):
+
+
+def downsample_random(cloud, labels, num_points=500, print_down_labels = False, seed=None, features=[], keep_undersampled=False):
     """
     Downsample using Random Sample method.
     Value is the number of points to downsample to.
@@ -202,7 +205,11 @@ def downsample_random(cloud, labels, num_points=500, print_down_labels = False, 
     """
     print(get_num_points(cloud))
     print("CLOUD NORMALS",cloud.normals)
-    assert(num_points <= get_num_points(cloud))
+    
+    if num_points <= get_num_points(cloud) and keep_undersampled:
+        return cloud, labels
+    else:
+        assert(num_points <= get_num_points(cloud))
 
     if seed is not None:
         random.seed(random.random())
@@ -213,21 +220,21 @@ def downsample_random(cloud, labels, num_points=500, print_down_labels = False, 
     print(len(points))
     print(len(colors))
     print(len(normals))
-    
-    sampled_points = random.sample(list(points), num_points)
-    if COLOR in features:
+    sampled_indices = random.sample(list(range(len(points))), num_points)
+
+    sampled_points = np.array([points[i] for i in sampled_indices])
+    if COLOR in features and list(colors):
         print(" - Including features: COLORS")
-        sampled_colors = random.sample(list(colors), num_points)
+        sampled_colors = np.array([colors[i] for i in sampled_indices])
     else: 
         sampled_colors = None
-    if NORMAL in features:
+    if NORMAL in features and list(normals):
         print(" - Including features: NORMALS")
-        sampled_normals = random.sample(list(normals), num_points)
+        sampled_normals = np.array([normals[i] for i in sampled_indices])
     else: 
         sampled_normals = None
     print(labels)
-    sampled_labels = random.sample(list(labels), num_points)
-
+    sampled_labels = np.array([labels[i] for i in sampled_indices])
     
     sparse_pcd = numpy_to_o3d(sampled_points, sampled_colors, sampled_normals)
 
@@ -291,13 +298,14 @@ def downsample(cloud, labels, method=VOXEL_SAMPLE, value=0.5, print_down_labels 
     Voxel: Evenly samples a pointcloud based on spatial binning
     Random: Randomly samples pointcloud to a specified number of points
     """
-    
+    print(features)
 
     if method == RANDOM_SAMPLE:
         sparse_pcd, sampled_labels = downsample_random(cloud, labels, num_points=value, print_down_labels = False, seed=None, features=features)
+        print(sparse_pcd, sampled_labels)
     
     elif method == VOXEL_SAMPLE:
-       sparse_pcd, sampled_labels = downsample_voxel(cloud, labels, voxel_size=value, print_down_labels = print_down_labels, features = features)
+        sparse_pcd, sampled_labels = downsample_voxel(cloud, labels, voxel_size=value, print_down_labels = print_down_labels, features = features)
             
     if print_down_labels:
         print("Sampled Labels", sampled_labels)
@@ -320,29 +328,30 @@ def normalize(cloud, method=MINMAX):
         Why scale? Different camera libraries measure at different scales. Kinect is mm while Realsense is in m.
 
     """
-    # for index, cloud in enumerate(pointcloud_list):
-    if method == MINMAX:
-        #normalize the points only
-        scaler = MinMaxScaler()
-    elif method == STANDARD:
-        scaler = StandardScaler()
-    elif method == MAXABS:
-        scaler = MaxAbsScaler()
-    elif method == ROBUST:
-        scaler = RobustScaler()
+    # # for index, cloud in enumerate(pointcloud_list):
+    # if method == MINMAX:
+    #     #normalize the points only
+    #     scaler = MinMaxScaler()
+    # elif method == STANDARD:
+    #     scaler = StandardScaler()
+    # elif method == MAXABS:
+    #     scaler = MaxAbsScaler()
+    # elif method == ROBUST:
+    #     scaler = RobustScaler()
 
-    #Extract the points into numpy
-    points, colors, normals = o3d_to_numpy(cloud)
-    print("COLORS 2")
-    print(colors)
+    # #Extract the points into numpy
+    # points, colors, normals = o3d_to_numpy(cloud)
+    # print("COLORS 2")
+    # print(colors)
 
-    scaler.fit(points)
-    points = scaler.transform(points)
+    # scaler.fit(points)
+    # points = scaler.transform(points)
 
-    #put the normalize pointcloud back into open3d, and into the list
-    cloud = numpy_to_o3d(points, colors, normals)
+    # #put the normalize pointcloud back into open3d, and into the list
+    # cloud = numpy_to_o3d(points, colors, normals)
+    # print(cloud.colors)
     
-
+    cloud.scale(0.5, center=(0, 0, 0))
     return cloud
 
 def test_train_split(pointcloud_list, test_split=33, seed=42):
@@ -354,6 +363,58 @@ def test_train_split(pointcloud_list, test_split=33, seed=42):
     """
     pass
 
+def export_hdf5_v2(filename, json_cloud_list, max_points = 1024):
+    """
+    Designed for json file based dataset. Takes Json data format (Points, Labels, Label ID,  Label Types) and splits all the data, storing all pointclouds into hdf5 format.
+    NOTE: This function requires the data to be pre-processed by json preprocess function.
+
+    Parameters:
+        filename:
+        cloud_list
+        labels:
+        label_types
+    
+    returns:
+        test_list
+        train_list
+        
+        test_label_types
+        train_label_types
+
+        test_labels
+        train_labels
+
+    """
+    # Structure data
+    base_numpy_data = np.zeros((len(json_cloud_list), max_points, 3))
+
+    colors_h5 = base_numpy_data
+    normals_h5 = base_numpy_data
+    points_h5 = base_numpy_data
+
+    labels_h5 = np.zeros((len(json_cloud_list), max_points), dtype="string")
+    label_types_h5 = np.zeros((len(json_cloud_list), max_points))
+
+    for index, cloud in enumerate(json_cloud_list):
+        np_cloud_points, np_cloud_colors, np_cloud_normals = o3d_to_numpy(cloud)
+        for point_index, point in enumerate(np_cloud_points):
+
+            # print(point)
+            # print(np_cloud_normals)
+            try:
+                points_h5[index, point_index] = point
+                if np.any(np_cloud_colors):
+                    colors_h5[index, point_index] = np_cloud_colors[point_index]
+                if np.any(np_cloud_normals):
+                    normals_h5[index, point_index] = np_cloud_normals[point_index]
+                labels_h5[index, point_index] = labels[index][point_index]
+            except Exception as e:
+                print(e)
+                print(len(np_cloud_points))
+
+
+
+
 def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]):
     """
     test_list: list of pointclouds which are split into the test sample
@@ -364,10 +425,11 @@ def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]
     """
 
     data_h5 = np.zeros((len(cloud_list), max_points, 3))
-
     colors_h5 = np.zeros((len(cloud_list), max_points, 3))
     normals_h5 = np.zeros((len(cloud_list), max_points, 3))
+    
     labels_h5 = np.zeros((len(cloud_list), max_points))
+    
 
 
     for index, cloud in enumerate(cloud_list):
@@ -376,10 +438,19 @@ def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]
 
             # print(point)
             # print(np_cloud_normals)
-            data_h5[index, point_index] = point
-            colors_h5[index, point_index] = np_cloud_colors[point_index]
-            normals_h5[index, point_index] = np_cloud_normals[point_index]
-            labels_h5[index, point_index] = labels[index][point_index]
+            try:
+                data_h5[index, point_index] = point
+                if np.any(np_cloud_colors):
+                    colors_h5[index, point_index] = np_cloud_colors[point_index]
+                if np.any(np_cloud_normals):
+                    normals_h5[index, point_index] = np_cloud_normals[point_index]
+                labels_h5[index, point_index] = labels[index][point_index]
+            except Exception as e:
+                print(e)
+                print(len(np_cloud_points))
+                # print(np_cloud_normals)
+                # print(np_cloud_colors)
+                
          
         # data_h5[:np_cloud_points.shape[0],:np_cloud_points.shape[1]] = np_cloud_points
         # print(data_h5)
@@ -397,12 +468,12 @@ def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]
     print(train_filename)
     hdf_train = h5py.File(train_filename, "w")
     #dataset = f.create_dataset("data", data = point_data)
-    hdf_train.create_dataset("data", data = train_points)
-    hdf_train.create_dataset("data_num", data = point_num_train)
+    hdf_train.create_dataset("points", data = train_points)
+    hdf_train.create_dataset("point_num", data = point_num_train)
     # hdf_test.create_dataset("label", data = test_labels) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
     hdf_train.create_dataset("label_seg", data = train_labels) #?
-    hdf_train.create_dataset("color", data = train_colors)
-    hdf_train.create_dataset("normal", data = train_normals)
+    hdf_train.create_dataset("colors", data = train_colors)
+    hdf_train.create_dataset("normals", data = train_normals)
 
     hdf_train.flush()
     hdf_train.close()
@@ -410,12 +481,12 @@ def export_hdf5(filename, cloud_list, labels, point_num, max_points, features=[]
     test_filename = filename +"_test.h5"
     hdf_test = h5py.File(test_filename, "w")
     #dataset = f.create_dataset("data", data = point_data)
-    hdf_test.create_dataset("data", data = test_points)
-    hdf_test.create_dataset("data_num", data = point_num_test)
+    hdf_test.create_dataset("points", data = test_points)
+    hdf_test.create_dataset("point_num", data = point_num_test)
     # hdf_test.create_dataset("label", data = test_labels) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
     hdf_test.create_dataset("label_seg", data = test_labels) #?
-    hdf_test.create_dataset("color", data = test_colors)
-    hdf_test.create_dataset("normal", data = test_normals)
+    hdf_test.create_dataset("colors", data = test_colors)
+    hdf_test.create_dataset("normals", data = test_normals)
 
 
     hdf_test.flush()
@@ -449,6 +520,44 @@ def estimate_normals(cloud, radius=0.1, max_nn=30):
     return cloud
 
 
-def write_settings(self, setting, value):
+def write_settings(setting, value):
     pass
 
+def json_preprocess(file_list, sample_size = 1024, sample_seed=42):
+    """
+    loads a list of json files and preprocesses the data.
+
+    Samples each file (random sample) and does not remove data labelled as keypoints
+    """
+    # sample_size = points.value()
+
+    pointclouds = []
+
+    for file in file_list:
+        if file in file_list[:-4] == "json":
+            pointcloud = utils.load_json_pointcloud(file)
+        else:
+            pointcloud = file
+        # get total point size
+        point_count = len(pointcloud['points'])
+
+        # separate keypoints and segmentation for labelling
+        types = pointcloud['label_types']
+        keypoint_indices = utils.data_indices(types, polygon.TYPE_POINT)
+        pointcloud_indices = utils.generate_indices(pointcloud['points'])
+        non_keypoint_indices = list(set(pointcloud_indices).difference(set(keypoint_indices.tolist())))
+
+        print(non_keypoint_indices)
+        
+        # We do not want to sample keypoint indices so to keep sample sample size the same as value passed in we only sample non-keypoints and add keypoints back in
+        segment_sample_size = sample_size - len(keypoint_indices)
+
+        non_keypoint_sampled_indices = utils.random_sample_indices(segment_sample_size, seed=sample_seed)
+
+        sampled_indices = np.vstack((non_keypoint_sampled_indices, keypoint_indices))
+
+        # Create a dictionary representitive of the dictionary that is loaded.   
+        sampled_dict = utils.select_dict_indices(pointcloud, sampled_indices)
+        pointclouds.append(sampled_dict)
+
+    return sampled_dict

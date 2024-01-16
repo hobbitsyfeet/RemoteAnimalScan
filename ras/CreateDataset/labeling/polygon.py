@@ -3,33 +3,61 @@ from datetime import datetime
 import numpy as np
 import cv2
 import labeling.utils as utils
+import uuid
 
+TYPE_EMPTY = 0
+TYPE_POINT = 1
+TYPE_LINE = 2
+TYPE_POLYGON = 3
 
 '''
 ######################################################################
-CLASS LABELPOLYGON
+CLASS LABELSHAPE
 
 
 ######################################################################
 '''
-class LabelPolygon():
-    def __init__(self):
+class LabelShape():
+    def __init__(self, name=None):
         random.seed(datetime.now())
+        self.total_distance = 0
         self.mean = (0,0)
-        self.polygon_label = None
+        self.type = 0
+        self.parent = None
+        self.siblings = []
+        self.name = name
+
         self.filename = None
         self.points = []
         self.view = True
         self.index = None
         self.color = (random.randint(0, 255),random.randint(0, 255),random.randint(0, 255),0.5) #RGBA
 
+        self.id = uuid.uuid4()
+
         self.queue_save = False
 
         # flag to see if polygon is being created
         self.creating = True
 
+    def get_label_type(self):
+        """
+        updates and returns label type
+        """
+        if len(self.points) == 1:
+            self.type = TYPE_POINT
+        elif len(self.points) == 2:
+            self.type = TYPE_LINE
+        elif len(self.points) > 2:
+            self.type = TYPE_POLYGON
+        else:
+            self.type = TYPE_EMPTY
+
+        return self.type
+            
+
     def set_label(self, label):
-        self.polygon_label = str(label)
+        self.name = str(label)
 
     def calculate_mean(self):
         '''
@@ -65,7 +93,7 @@ class LabelPolygon():
         # self.queue_save = True
         self.points.append(location)
         self.calculate_mean()
-
+        self.get_label_type()
     # def get_points(self, point_idx):
     #     '''
     #     '''
@@ -107,21 +135,21 @@ class LabelPolygon():
             pts = pts.reshape((-1, 1, 2)) 
 
             if not self.creating:
-                image = cv2.fillPoly(overlay, [pts], self.color)
+                image = cv2.fillPoly(overlay, [pts], infill)
 
             if show_lines:
                 image = cv2.polylines(overlay,[pts], (not self.creating), line_color, thickness)
             
             if show_label:
                 font_color = (255, 245, 85)
-                label = self.polygon_label
+                label = self.name
                 if overwrite_label is not None:
                     label = overwrite_label
                     
                 if label:
                     cv2.putText(output, text=label, org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
-                else:
-                    cv2.putText(output, text="No Label", org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
+                # else:
+                #     cv2.putText(output, text="No Label", org=(int(self.mean[0]) - 20, int(self.mean[1])), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=0.75, color=font_color,thickness=1, lineType=cv2.LINE_AA)
 
             
         cv2.addWeighted(overlay, 0.3, output, 1 - 0.3, 0, output)
@@ -148,6 +176,7 @@ class LabelPolygon():
         for i, test_point in enumerate(self.points):
             if point == test_point:
                 self.points.pop(i)
+        self.get_label_type()
                 
 
         
@@ -200,12 +229,39 @@ class LabelPolygon():
         return mask
                 # image = cv2.circle(image, point, 1, (0,255,0),7)
 
-    def get_segment_crop(self, image, point_pairs):
+    def get_relational_segment(self, image, point_pairs):
+        """
+        gets segment relative to parental segments and sibling priority
+        """
+
+        # Get relationship order from parents (child exists only within parent)
+        parent_hierarcy = []
+        temp_parent = None
+
+        temp_parent = self.parent
+        parent_hierarcy.append(temp_parent)
+
+        # Go until the parent tree stops
+        while temp_parent is not None:
+            temp_parent = temp_parent.parent
+            parent_hierarcy.append()
+
+        
+
+        # # Get relationship order from siblings. This subtracts overlapping 
+        # for sibling in self.siblings:
+
+
+  
+    def get_segment_crop(self, image, point_pairs, points=None, edit=True):
         
         # print(image)
         # print(point_pairs)
-
-        pts = np.array(self.points)
+        pts = None
+        if points == None:
+            pts = np.array(self.points)
+        else:
+            pts = np.array(self.points)
 
         ## (1) Crop the bounding rect
         rect = cv2.boundingRect(pts)
@@ -254,7 +310,8 @@ class LabelPolygon():
 
         cloud, points, colour = utils.map_pairs_2D(full_invalid_dst2, point_pairs)
         # utils.display_cloud(cloud)
-        utils.edit_cloud(cloud)
+        if edit:
+            utils.edit_cloud(cloud)
         
 
         # np.nan_to_num(full_dst2).astype(np.uint8)

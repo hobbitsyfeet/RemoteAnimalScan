@@ -7,13 +7,6 @@
 # Command z for deleting last interacted point # DONE
 # Redo button
 
-
-
-
-from datetime import datetime
-from fileinput import filename
-from imp import reload
-
 # import open3d
 import cv2
 import sys
@@ -107,6 +100,8 @@ class App(QMainWindow):
         self.training_datast = Dataset()
         self.testing_dataset = Dataset()
 
+        self.coco_labels = None
+
         self.scores = LabelScore()
         self.test_set = self.training_datast
 
@@ -140,7 +135,11 @@ class App(QMainWindow):
             print(e)
             print("Could not load data folder, find it by yourself.")
         
-        self.load_random(True)
+        self.load_seed = self.user
+
+        # self.load_random(True, seed=self.user)
+
+        self.load_labels(show_ui=False, dataset=self.training_datast, path=(os.path.expanduser(os.getcwd()) + "/data/Finished_GroundTruth.csv"))
         
         # self.file_list_widget.setSelectionMode(
         #     QAbstractItemView.ExtendedSelection
@@ -289,6 +288,7 @@ class App(QMainWindow):
         self.dock.setWidget(self.file_list_widget)
 
 
+
         self.label_list_dock = QDockWidget("Label List")
         self.label_list_widget = QListWidget()
 
@@ -313,7 +313,6 @@ class App(QMainWindow):
         # self.label_container_widget.setLayout(self.label_info_layout)
         self.label_info.setWidget(self.label_stack_widget)
 
-
         #NOTE PROGRESS BAR WORKS BUT LOOKS WEIRD ON MAC
         # self.load_bar = QProgressBar(self.dock, alignment=Qt.AlignCenter)
         # self.load_bar.setMaximum(100)
@@ -333,10 +332,10 @@ class App(QMainWindow):
         # self.add_label() 
         self.show()
     
-    def toggle_edit_button(self, toggle_edit_menu):
+    def toggle_edit_button(self):
         
         self.edit_mode = not self.edit_mode
-        toggle_edit_menu.setChecked(self.edit_mode)
+        self.edit_toggle.setChecked(self.edit_mode)
         self.viewer.toggle_edit()
         if self.edit_mode:
             self.tool_toggle_edit.setIcon(QIcon("icons/edit.png"))
@@ -365,7 +364,49 @@ class App(QMainWindow):
 
             # self.label_stack_layout.setCurrentIndex(index)
             # self.current_polygon = self.dataset.labels[index]
+
+    def populate_labels(self, list):
+        '''
+        Populates the parent and sibling with dataset labels
+        '''
+        index = list.currentIndex()
+        list.clear()
+        list.addItem("None", None)
+
+        polygons = self.dataset.get_polygons_by_file(self.selected_file)
+        for polygon in polygons:
+            list.addItem(polygon.name, polygon.id)
         
+        list.setCurrentIndex(index)
+
+    def populate_siblings(self, unselected_siblings, siblings):
+
+        # Grab all the data in selected siblings and maintain order
+        selected = []
+        for x in range(siblings.count()):
+            selected.append(siblings.item(x).data(1))
+
+        # Clear the two lists
+        unselected_siblings.clear()
+        siblings.clear()
+
+        # Add selected items into 
+        for index in selected:
+            item = QListWidgetItem()
+            item.setText(self.dataset.labels[index].name)
+            item.setData(1, self.dataset.labels[index].id)
+            siblings.addItem(item)
+
+        # Create universal set and subtract selected set
+        unselected_set = set(range(len(self.dataset.labels)))  - set(selected)
+        
+        for index in unselected_set:
+            item = QListWidgetItem()
+            item.setText(self.dataset.labels[index].name)
+            item.setData(1, self.dataset.labels[index].id)
+            unselected_siblings.addItem(item)
+
+
 
     def label_clicked(self):
         self.hide_labels()
@@ -375,7 +416,19 @@ class App(QMainWindow):
         self.label_stack_layout.setEnabled(True)
 
         # Show selected stack layout from selected label
-        self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget().setHidden(False)
+        widget_stack = self.label_stack_layout.itemAt(self.label_stack_layout.currentIndex()).widget()
+        layer_layout = widget_stack.layout()
+        
+        # Sibling/parent index
+        parent_combo = layer_layout.itemAt(5).widget()
+        unselected_siblings = layer_layout.itemAt(6).widget().layout().itemAt(0).widget()
+        selected_siblings = layer_layout.itemAt(6).widget().layout().itemAt(1).widget()
+        self.populate_labels(parent_combo)
+        self.populate_siblings(unselected_siblings, selected_siblings)
+
+        widget_stack.setHidden(False) # Unhides the stacked layout
+
+        
 
         # print("INDEX:", index)
         # self.current_polygon = self.dataset.labels[index]
@@ -414,6 +467,31 @@ class App(QMainWindow):
         # visible.setEnabled(False)
         
         parent_label = QComboBox()
+        # parent_label.currentIndexChanged.connect()
+        
+
+        relationship_widget = QWidget()
+        relationship_layout = QHBoxLayout()
+
+        sibling_priority = QListWidget()
+        sibling_priority.setDragDropMode(QAbstractItemView.DragDrop)
+        sibling_priority.setFixedWidth(90)
+        sibling_priority.setDefaultDropAction(QtCore.Qt.MoveAction)
+
+
+
+        # sibling_priority.setDragDropMode(QtGui.QAbstractItemView.InternalMove)
+        unselected_siblings = QListWidget()
+        unselected_siblings.setDragDropMode(QAbstractItemView.DragDrop)
+        unselected_siblings.setFixedWidth(90)
+        unselected_siblings.setDefaultDropAction(QtCore.Qt.MoveAction)
+
+        relationship_layout.addWidget(unselected_siblings)
+        relationship_layout.addWidget(sibling_priority)
+
+        relationship_widget.setLayout(relationship_layout)
+        
+
         delete = QPushButton("Delete")
         delete.clicked.connect(lambda: self.delete_pressed())
         preview = QPushButton("Preview")
@@ -430,6 +508,7 @@ class App(QMainWindow):
         label_info_layout.addWidget(total_distance_label)
         label_info_layout.addWidget(visible)
         label_info_layout.addWidget(parent_label)
+        label_info_layout.addWidget(relationship_widget)
         label_info_layout.addWidget(delete)
         label_info_layout.addWidget(preview)
         # label_info_layout.addWidget(test)
@@ -449,19 +528,56 @@ class App(QMainWindow):
         
         print(label_name.text())
         label_name.textChanged.connect(lambda: self.handle_label_name_change(label_name, count))
+        label_name.textChanged.connect(lambda: self.populate_labels(parent_label))
+        label_name.textChanged.connect(lambda: self.populate_siblings(unselected_siblings, sibling_priority))
+        parent_label.currentIndexChanged.connect(lambda: self.update_polygon_relationships(parent=parent_label))
+        sibling_priority.itemChanged.connect(lambda: self.update_polygon_relationships(siblings=sibling_priority))
+        sibling_priority.itemActivated.connect(lambda: self.update_polygon_relationships(siblings=sibling_priority))
         visible.clicked.connect(lambda: self.change_visible(count, item.checkState(), visible))
         preview.clicked.connect(lambda: self.show_labels_3D())
 
     def next_pressed(self):
-        # Test the polygon 
-        self.test_poly(self.test_set)
+        # Test the polygon
 
-        # This is to pause to show result before moving on
+        score, passed = self.test_and_record_poly(self.test_set)
+
+        # Score of -1 indicates an error and must fix the error before recording any data.
+        if score == -1:
+            return
+        # self.scores.add_polyscore(self.selected_file, self.dataset.current_polygon.total_distance, passed, self.scores.training_phase)
+
         msg = QMessageBox()
         msg.setWindowTitle("Results")
-        msg.setText("Press OK to continue.")
-        x = msg.exec_()  # this will show our messagebox
-        self.load_random()
+
+        # Only changes to testing phase when training has been completed.
+        if self.scores.passed_training() and self.scores.training_phase:
+            text = ("Score:" + str(self.scores.training_score) + "Press OK to continue. \nYou are now entering the Testing Phase")
+            msg.setText(text)
+            x = msg.exec_()  # this will show our messagebox
+
+            self.scores.training_phase = False
+            testing_folder = os.path.expanduser(os.getcwd()) + "/data/Testing/"
+            self.get_folder(testing_folder)
+            self.load_random(reload_order=True)
+
+
+        elif not self.scores.passed_training():
+            text = ("Score:" + str(self.scores.correct_train) + "/" + str(self.scores.training_pass_limit) + " : " + str(self.scores.training_score*100) + "Press OK to continue.")
+            msg.setText(text)
+            x = msg.exec_()  # this will show our messagebox
+
+            self.load_random(False)
+
+        elif self.scores.number_tested >= self.scores.total_test_files and self.scores.total_test_files != 0:
+            text = ("Score:" + str(self.scores.testing_score) + "\nYou are complete. Please submit your results.")
+            msg.setText(text)
+            x = msg.exec_()  # this will show our messagebox
+
+        else:
+            self.load_random(False)
+        print(self.scores.number_tested, self.scores.total_test_files)
+
+        
 
     def get_current_info_widgets(self, item_at):
         # layout = self.label_stack_layout.children()[0].children()[0].children()
@@ -487,6 +603,26 @@ class App(QMainWindow):
             print(e)
             print("Could not change name on item that does not exist")
         self.viewer.redraw_all()
+
+    def update_polygon_relationships(self, parent=None, siblings=None):
+            
+        if parent:
+            selected_id = parent.currentData(1) # Grabs the polygon id
+            self.dataset.current_polygon.parent = self.dataset.get_polygon_by_id(selected_id)
+        
+        if siblings:
+            
+            # Create sibling list before we assign it
+            sibling_list = []
+            for index in range(siblings.count()):
+                sibling_id = siblings.item(index).data(1) # data(1) is the data location for polygon id
+                sibling_polygon = self.dataset.get_polygon_by_id(sibling_id)
+                sibling_list.append(sibling_polygon)
+
+            
+
+            # for sibling_polygon in sibling_list:
+            #     sibling_polygon.siblings = sibling_list
 
     def hide_all(self):
         for index in range(self.label_list_widget.count()):
@@ -606,6 +742,12 @@ class App(QMainWindow):
         export_all = QAction("Export All", self)
         export_all.triggered.connect(lambda: self.dataset.export_all_labels(self.user, self.current_folder))
 
+        # export_coco = QAction("Save Coco Labels", self)
+        # export_coco.triggered.connect(lambda: self.dataset.save_coco_file(self.selected_file, self.coco_labels, self.original_img))
+
+        export_json = QAction("Save ply as Json", self)
+        export_json.triggered.connect(lambda: self.dataset.export_ply_and_labels(self.dataset.current_file))
+
         autosave = QAction("Autosave", self, checkable=True)
         autosave.setChecked(True)
         autosave.triggered.connect(lambda: self.toggle_autosave())
@@ -615,7 +757,9 @@ class App(QMainWindow):
         file.addAction(load_csv)
         file.addAction(load_training_dataset)
         file.addAction(load_testing_dataset)
+        # file.addAction(export_coco)
         file.addAction(export_all)
+        file.addAction(export_json)
 
         file.addAction(autosave)
 
@@ -629,13 +773,14 @@ class App(QMainWindow):
         edit_redo.triggered.connect(lambda: self.redo())
         edit_redo.setShortcuts([QtGui.QKeySequence(Qt.CTRL + Qt.Key_Y)])
 
-        edit_toggle = QAction("Toggle Edit Mode", self, checkable=True)
-        edit_toggle.setChecked(False)
-        edit_toggle.triggered.connect(lambda: self.toggle_edit_button(edit_toggle))
-        edit_toggle.setShortcuts([QtGui.QKeySequence(Qt.Key_E)])
+        self.edit_toggle = QAction("Toggle Edit Mode", self, checkable=True)
+        self.edit_toggle.setChecked(False)
+        self.edit_toggle.triggered.connect(lambda: self.toggle_edit_button())
+        self.edit_toggle.setShortcuts([QtGui.QKeySequence(Qt.Key_E)])
 
         edit_new_label = QAction("New Label", self)
         edit_new_label.triggered.connect(lambda: self.add_label())
+        edit_new_label.setShortcuts([QtGui.QKeySequence(Qt.Key_Space)])
 
         edit_remove_point = QAction("Remove Point", self)
         edit_remove_point.triggered.connect(lambda: self.dataset.remove_point(self.viewer))
@@ -644,7 +789,7 @@ class App(QMainWindow):
 
         edit.addAction(edit_undo)
         edit.addAction(edit_redo)
-        edit.addAction(edit_toggle)
+        edit.addAction(self.edit_toggle)
         edit.addAction(edit_new_label)
         edit.addAction(edit_remove_point)
 
@@ -705,21 +850,22 @@ class App(QMainWindow):
     def toggle_autosave(self):
         self.autosave = not self.autosave
     
-    def load_labels(self, show_ui=True, dataset=None):
+    def load_labels(self, show_ui=True, dataset=None, path=None):
         "Loads points onto filename"
 
+        # temperary_selected = 
         if dataset is None:
             dataset = self.dataset
-            
-        filename = str(QFileDialog.getOpenFileName(self, "Select CSV", )[0])
+        
+        if path is None:
+            path = str(QFileDialog.getOpenFileName(self, "Select CSV to Load Labels", )[0])
 
-        csv = pd.read_csv(filename)
+        csv = pd.read_csv(path)
         # Iterate through each row. One row is one polygon.
         for index, row in csv.iterrows():
-            print(index)
             target_file = row["Filename"]
-            print(target_file)
-            self.selected_file = target_file
+            # print("loading labels for file:", target_file)
+            # self.selected_file = target_file
             points = row["Points"]
 
             # Parse Points from text to list of tuples
@@ -743,6 +889,11 @@ class App(QMainWindow):
             dataset.labels[label_index].creating = False
 
         print("Labels loaded.")
+
+        if self.scores.training_phase:
+            self.scores.total_train_files = len(self.file_list)
+        else:
+            self.scores.total_test_files = len(self.file_list)
 
     def add_label(self):
         print("Creating label")
@@ -785,10 +936,10 @@ class App(QMainWindow):
         print(self.selected_file)
         extention = self.selected_file.split('.')[-1]
 
-        if extention == "ply" or extention == "projected":
+        if extention == "ply" or extention == "projected" or extention =="json":
             
             self.hide_all()
-            self.dataset.load_ply(utils.get_global_filename(self.current_folder, self.selected_file))
+            self.dataset.load_cloud(utils.get_global_filename(self.current_folder, self.selected_file))
             self.image = self.dataset.image
             
             # print(self.dataset.file_labels.keys())
@@ -860,11 +1011,11 @@ class App(QMainWindow):
         self.file_list_widget.repaint()
         self.file_list_widget.show()
 
-        # self.load_random(True)
+        self.load_random(True, self.user)
         
         print("Loaded",  self.file_list)
 
-    def load_random(self, reload_order=True):
+    def load_random(self, reload_order=True, seed=None):
         '''
         Load random will take a random file in the testing set and load it for the user.
 
@@ -875,63 +1026,107 @@ class App(QMainWindow):
         # self.file_list
         print("RANDOM LOAD FILE LIST", self.file_list)
         if self.load_order is None or reload_order:
+
+            if seed is not None:
+                random.seed(seed)
+
             self.load_order = random.sample(self.file_list, k=len(self.file_list))
             self.load_order_index = 0
 
         # Select the file before we go to the next random image
         self.selected_file = self.load_order[self.load_order_index]
-        print("SELECCTED FILE", self.selected_file)
-        self.open_selected_file(already_selected=True)
+        print("SELECTED FILE", self.selected_file)
 
         # Increment load order index and modulo the number within the range. 
         # This makes the list repeat itself when next is above the range
-        self.load_order_index += 1
-        self.load_order_index = self.load_order_index % len(self.load_order)
+        self.load_order_index = (self.load_order_index + 1) % len(self.load_order)
+        print("Load Order" , self.load_order_index, self.selected_file, '\n',  self.load_order)
 
 
-    def test_poly(self, dataset, Training=True):
+        self.open_selected_file(already_selected=True)
+
+
+    def test_and_record_poly(self, dataset, Training=True):
         '''
         Tests if both points fall within a testing polygon
         '''
         if dataset.empty():
             print("Training dataset is empty. Load a dataset and try again.")
-            return
-        # Get current polygon
-        test_polygon = self.dataset.current_polygon
+            return 
 
-        if len(test_polygon.points) < 2:
-            print("You must assign a polygon with 2 points to test first.")
-            return
+        print("TESTED SELECTED FILE", self.selected_file)
+        testing_polygons = self.dataset.get_polygons_by_file(self.selected_file)
+        print("TESTING POLYGONS", testing_polygons)
+        # Make sure at least 2 polygons and every polygon has at least 2 points
+
+        if len(testing_polygons) < 2:
+            msg = QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText("You need at least 2 polygons.")
+            x = msg.exec_()  # this will show our messagebox
+            return -1, False
+
+        for polygon in testing_polygons:   
+            if len(polygon.points) < 2:
+                msg = QMessageBox()
+                msg.setWindowTitle("Error")
+                msg.setText("Every polygon needs at least 2 points.")
+                x = msg.exec_()  # this will show our messagebox
+                return -1, False
+
 
         fit_count = 0
         passed = False
+        train_pass = False
         both_test = False
         smallest_index = 0
-        # Get polygon from the same file
-        for train_file in dataset.file_labels.keys():
-            train_keys = dataset.file_labels[train_file]
 
-            # iterate becasuse it is a list since there should be 2
+        # Get polygon keys to test against user training polygons
+        train_keys = dataset.file_labels[self.selected_file]      
+
+        # Test all the polygons in current dataset
+        for test_polygon in testing_polygons:
+            # reset fit count
+            fit_count = 0
+            train_pass = False
+
+            # There should be 2 ground truth polygons
             for index, key in enumerate(train_keys):
-                if self.dataset.get_filename(test_polygon) == train_file:
-                    train_polygon = dataset.get_polygon(key)
-                    print(train_polygon)
-                    fit = self.dataset.measure_polygon_fit(test_polygon, train_polygon)
-                    print(fit)
+                # if self.dataset.get_filename(test_polygon) == self.selected_file:
+                train_polygon = dataset.get_polygon(key)
+
+                image = train_polygon.draw(self.viewer.image, overwrite_label=" ", show_points=False, infill=(255,255,204,0.5), line_color=(0,0,0), thickness=1)
+                self.viewer.update_image(image)
+                
+                fit = self.dataset.measure_polygon_fit(test_polygon, train_polygon)
+
+                # Test if 2 points exist inside of designated polygons
+                if len(train_polygon.points) > 2:
                     if fit:
                         fit_count += 1
-                        image = train_polygon.draw(self.viewer.image, overwrite_label="Correct!", line_color=(0,255,0), thickness=2)
-                        self.viewer.update_image(image)
-                    else:
-                        image = train_polygon.draw(self.viewer.image, overwrite_label="X", line_color=(0,0,255), thickness=2)
-                        self.viewer.update_image(image)
 
-        if fit_count == 2:
-            passed = True
+                    # else:
+                    #     image = train_polygon.draw(self.viewer.image, overwrite_label=" ", infill=(0,0,0,0.2), line_color=(255,0,0), thickness=1)
+                    #     self.viewer.update_image(image)
 
-        self.scores.add_polyscore(train_file, test_polygon, passed=passed, Training=Training)
+                if fit_count == 2:
+                    train_pass = True
+                    passed = True
+                # Record the score
+                self.scores.add_polyscore(self.selected_file, test_polygon, passed=passed, Training=Training)
+            print("TRAIN PASS", train_pass, polygon.points)
+            # print("FIT COUNT", fit_count)
 
-        return fit_count
+            if train_pass:
+                image = test_polygon.draw(self.viewer.image, overwrite_label=" ", line_color=(0,255,0), thickness=2)
+                self.viewer.update_image(image)
+            else:
+                image = test_polygon.draw(self.viewer.image, overwrite_label=" X ", line_color=(0,0,255), thickness=2)
+                self.viewer.update_image(image)
+
+
+
+        return fit_count, passed
 
     def testing_phase_check(self):
         if self.scores.training_phase and self.scores.passed_training():
@@ -941,7 +1136,7 @@ class App(QMainWindow):
             # Load testing folder and 
             testing_folder = os.path.expanduser(os.getcwd()) + "/data/Testing/"
             self.get_folder(testing_folder)
-            self.load_random(reload_order=True)
+            # self.load_random(reload_order=True)
 
         # If in the testing phase and file limit has been reached, you're done
         if self.scores.training_phase == False and self.scores.number_tested == self.scores.testing_file_number:
@@ -1058,6 +1253,9 @@ class PhotoViewer(QGraphicsView):
 
 
     def dataset(self):
+        """
+        Returns the parent's dataset
+        """
         return self.parent.dataset
 
     def start():
@@ -1356,7 +1554,7 @@ class PhotoViewer(QGraphicsView):
         #     for polygon2 in labels:
         #         if polygon1 != polygon2:
         #             score = self.dataset().measure_line_similarity(polygon1, polygon2, upper_limit=20)
-                    # print(polygon1.polygon_label, polygon2.polygon_label, score)
+                    # print(polygon1.name, polygon2.name, score)
                 
 
     def update_o3d_viewer(self):
@@ -1495,6 +1693,7 @@ class PhotoViewer(QGraphicsView):
             if len(self.dataset().current_polygon.points) >= 1:
                 
                 total_distance = utils.get_total_distance(self.dataset().point_pairs, self.dataset().current_polygon.points)
+                self.dataset().current_polygon.total_distance = total_distance/10
                 # print(total_distance)
                 self.parent.get_current_info_widgets(3).setText(("Total Distance: " + str(total_distance/10) + "cm"))       
 

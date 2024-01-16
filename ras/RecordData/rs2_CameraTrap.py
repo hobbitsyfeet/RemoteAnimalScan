@@ -16,7 +16,7 @@ import numpy as np
 import cv2
 from datetime import date, datetime, timedelta
 
-def record(output_path, width = 1280, height=720, timer=7):
+def record(output_path, width = 1280, height=720, timer=2):
 
     # Configure depth and color streams
     pipeline = rs.pipeline()
@@ -42,9 +42,9 @@ def record(output_path, width = 1280, height=720, timer=7):
 
         if frames:
             depth_frame = frames.get_depth_frame()
-            
-            points = cloud.calculate(depth_frame)
             cloud.map_to(color_frame)
+            points = cloud.calculate(depth_frame)
+            
             now = datetime.now()
             date_time = now.strftime("%m_%d_%Y_%H_%M_%S_%f")
 

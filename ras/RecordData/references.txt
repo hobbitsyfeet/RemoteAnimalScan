@@ -1,0 +1,8 @@
+@misc{pyk4a,
+  author = {Louis-Philippe Asselin and Etienne Dubeau and Ilya Gruzinov},
+  title = {pyk4a},
+  year = {2020},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/etiennedub/pyk4a/}},
+}

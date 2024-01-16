@@ -438,7 +438,7 @@ if __name__ == "__main__":
         label_train = labels_h5
         label_test = labels_h5
         # data_train, data_test, normal_train, normal_test, label_train, label_test = train_test_split(data_list, normal_list, label_list, test_size=0.33, random_state=42)
-        # data_train, data_test, normal_train, normal_test, label_train, label_test, data_num_train, data_num_test, model_id_train, model_id_test = train_test_split(data_h5, normals_h5, labels_h5, data_num_h5, model_id_h5, test_size=0.33, random_state=42)
+        data_train, data_test, normal_train, normal_test, label_train, label_test, data_num_train, data_num_test, model_id_train, model_id_test = train_test_split(data_h5, normals_h5, labels_h5, data_num_h5, model_id_h5, test_size=0.33, random_state=42)
     
     # print(data_train)
 
@@ -453,7 +453,7 @@ if __name__ == "__main__":
     #dataset = f.create_dataset("data", data = point_data)
     hdf_train.create_dataset("data", data = data_train)
     hdf_train.create_dataset("data_num", data = data_num_train)
-    hdf_train.create_dataset("label", data = model_id_train) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
+    # hdf_train.create_dataset("label", data = model_id_train) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
     hdf_train.create_dataset("label_seg", data = label_train) #The labels for each point
     hdf_train.create_dataset("normal", data = normal_train) #surface normals
 
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     #dataset = f.create_dataset("data", data = point_data)
     hdf_test.create_dataset("data", data = data_test)
     hdf_test.create_dataset("data_num", data = data_num_test)
-    hdf_test.create_dataset("label", data = model_id_test) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
+    # hdf_test.create_dataset("label", data = model_id_test) #Here we are just saying the labels belong to only one object (stick man, raccoon...)
     hdf_test.create_dataset("label_seg", data = label_test)
     hdf_test.create_dataset("normal", data = normal_test)
 
